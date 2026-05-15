@@ -34,7 +34,7 @@ const TRAIN_STATIONS = [
     lon: -0.17619,
     lines: [
       { id: "elizabeth", name: "Elizabeth line" },
-      { id: "great-western-railway", name: "Great Western Railway" },
+      { id: "national-rail", name: "National Rail" },
     ],
   },
   {
@@ -406,7 +406,7 @@ async function loadSelectedTrainLine(station, lineId) {
 
   try {
     const [allArrivals, lineStatus] = await Promise.all([getStationTrainArrivals(station.id), getLineStatus(lineId)]);
-    const arrivals = allArrivals.filter((arrival) => arrival.lineId === lineId).slice(0, SELECTED_TRAIN_ARRIVALS);
+    const arrivals = filterArrivalsByLine(allArrivals, lineId).slice(0, SELECTED_TRAIN_ARRIVALS);
     renderLineStatus(lineStatus, lineId);
     renderSelectedTrainStation(station, arrivals, lineId);
     setTrainStationStatus(station, lineId, arrivals.length, lineStatus);
@@ -514,6 +514,18 @@ async function getStationTrainArrivals(stationId) {
 }
 
 async function getLineStatus(lineId) {
+  if (lineId === "national-rail") {
+    return {
+      name: "National Rail",
+      lineStatuses: [
+        {
+          statusSeverityDescription: "Status varies by operator",
+          reason: "TfL does not provide one combined live status for all National Rail services.",
+        },
+      ],
+    };
+  }
+
   const statuses = await fetchJson(`${API_BASE}/Line/${encodeURIComponent(lineId)}/Status`);
   return statuses[0] || null;
 }
@@ -772,6 +784,14 @@ function getArrivalLines(arrivals, station) {
     }
   });
   return [...lineMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function filterArrivalsByLine(arrivals, lineId) {
+  if (lineId === "national-rail") {
+    return arrivals.filter((arrival) => arrival.modeName === "national-rail");
+  }
+
+  return arrivals.filter((arrival) => arrival.lineId === lineId);
 }
 
 function formatLineName(lineId) {
