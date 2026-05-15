@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nearest Transit Times</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar" aria-label="Transit arrival search">
+        <div>
+          <p class="eyebrow">Live TfL arrivals</p>
+          <h1>Nearest Transit Times</h1>
+        </div>
+        <div class="actions">
+          <button class="icon-button" id="refreshButton" type="button" title="Refresh arrivals" aria-label="Refresh arrivals">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="Location controls">
+        <button class="primary-button" id="locateButton" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+            <circle cx="12" cy="12" r="5" />
+          </svg>
+          Use my location
+        </button>
+        <button class="secondary-button" id="demoButton" type="button">Try central London</button>
+        <div class="display-controls" aria-label="Display options">
+          <label>
+            Bus
+            <select id="busSelect">
+              <option value="show">Show buses</option>
+              <option value="hide">Hide buses</option>
+            </select>
+          </label>
+          <label>
+            Train
+            <select id="trainSelect">
+              <option value="show">Show trains</option>
+              <option value="hide">Hide trains</option>
+            </select>
+          </label>
+        </div>
+        <form class="manual-form" id="manualForm" aria-label="Manual coordinates">
+          <label>
+            Latitude
+            <input id="latInput" inputmode="decimal" placeholder="51.5074" autocomplete="off" />
+          </label>
+          <label>
+            Longitude
+            <input id="lonInput" inputmode="decimal" placeholder="-0.1278" autocomplete="off" />
+          </label>
+          <button class="secondary-button" type="submit">Search</button>
+        </form>
+      </section>
+
+      <section class="status-panel" aria-live="polite">
+        <div>
+          <span class="status-dot" id="statusDot"></span>
+          <p id="statusText">Choose a location to see nearby buses and trains.</p>
+        </div>
+        <div class="status-times">
+          <p class="last-updated" id="lastUpdated"></p>
+          <p class="refresh-countdown" id="refreshCountdown">Auto refresh every 30s</p>
+        </div>
+      </section>
+
+      <section class="result-section" aria-label="Nearest bus stops">
+        <div class="section-heading">
+          <h2>Closest Bus Stops</h2>
+          <p>Next 3 buses at each stop</p>
+        </div>
+        <div class="card-grid bus-grid" id="stopGrid"></div>
+      </section>
+
+      <section class="result-section" aria-label="Nearest train stations">
+        <div class="section-heading">
+          <h2>Closest Train Stations</h2>
+          <p>Next 3 train departures at each station</p>
+        </div>
+        <div class="card-grid station-grid" id="stationGrid"></div>
+      </section>
+    </main>
+
+    <template id="stopTemplate">
+      <a class="stop-card" target="_blank" rel="noopener noreferrer">
+        <header class="stop-header">
+          <div>
+            <p class="stop-meta"></p>
+            <h2></h2>
+          </div>
+          <span class="stop-letter"></span>
+        </header>
+        <ol class="arrival-list"></ol>
+      </a>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
