@@ -26,7 +26,31 @@ const TRAIN_STATIONS = [
   { name: "Charing Cross", id: "940GZZLUCHX", lat: 51.50741, lon: -0.127277 },
   { name: "King's Cross St. Pancras", id: "940GZZLUKSX", lat: 51.530663, lon: -0.123194 },
   { name: "Victoria", id: "940GZZLUVIC", lat: 51.496424, lon: -0.143921 },
-  { name: "Paddington", id: "940GZZLUPAC", lat: 51.515184, lon: -0.175539 },
+  { name: "Paddington Underground", id: "940GZZLUPAC", lat: 51.515184, lon: -0.175539 },
+  {
+    name: "Paddington Rail",
+    id: "910GPADTON",
+    lat: 51.51603,
+    lon: -0.17619,
+    lines: [
+      { id: "elizabeth", name: "Elizabeth line" },
+      { id: "great-western-railway", name: "Great Western Railway" },
+    ],
+  },
+  {
+    name: "Tottenham Court Road Elizabeth line",
+    id: "910GTOTCTRD",
+    lat: 51.515698,
+    lon: -0.13044,
+    lines: [{ id: "elizabeth", name: "Elizabeth line" }],
+  },
+  {
+    name: "Stratford Elizabeth line",
+    id: "910GSTFD",
+    lat: 51.541893,
+    lon: -0.003379,
+    lines: [{ id: "elizabeth", name: "Elizabeth line" }],
+  },
 ];
 
 const state = {
@@ -335,7 +359,7 @@ async function loadSelectedTrainStation() {
 
   try {
     const arrivals = await getStationTrainArrivals(station.id);
-    const lines = getArrivalLines(arrivals);
+    const lines = getArrivalLines(arrivals, station);
 
     if (!lines.length) {
       trainLineSelect.innerHTML = `<option>No live train lines found</option>`;
@@ -731,8 +755,14 @@ function setTrainStationStatus(station, lineId, arrivalCount, lineStatus) {
   }
 }
 
-function getArrivalLines(arrivals) {
+function getArrivalLines(arrivals, station) {
   const lineMap = new Map();
+  (station.lines || []).forEach((line) => {
+    lineMap.set(line.id, {
+      id: line.id,
+      name: line.name || formatLineName(line.id),
+    });
+  });
   arrivals.forEach((arrival) => {
     if (arrival.lineId && !lineMap.has(arrival.lineId)) {
       lineMap.set(arrival.lineId, {
