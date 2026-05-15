@@ -7,19 +7,42 @@ const CANDIDATE_BUS_STOPS = 10;
 const CANDIDATE_STATIONS = 8;
 const STATION_MODES = new Set(["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram"]);
 const AUTO_REFRESH_SECONDS = 30;
+const SELECTED_STOP_ARRIVALS = 5;
+const SELECTED_STOP_CANDIDATES = 30;
+const AREAS = [
+  { label: "Central London", lat: 51.5074, lon: -0.1278 },
+  { label: "King's Cross", lat: 51.5308, lon: -0.1238 },
+  { label: "Victoria", lat: 51.4965, lon: -0.1447 },
+  { label: "Paddington", lat: 51.5154, lon: -0.1755 },
+  { label: "Stratford", lat: 51.5413, lon: -0.0032 },
+  { label: "Canary Wharf", lat: 51.5054, lon: -0.0235 },
+  { label: "Brixton", lat: 51.4626, lon: -0.1149 },
+  { label: "Camden Town", lat: 51.539, lon: -0.1426 },
+  { label: "Shoreditch", lat: 51.5235, lon: -0.0754 },
+  { label: "Hammersmith", lat: 51.4927, lon: -0.2259 },
+];
 
 const state = {
+  activePage: "live",
   lastLocation: null,
   loading: false,
   pendingReload: false,
+  selectedAreaStops: [],
+  selectedStop: null,
   nextRefreshAt: null,
   autoRefreshTimer: null,
 };
 
+const livePage = document.querySelector("#livePage");
+const selectPage = document.querySelector("#selectPage");
+const liveNavButton = document.querySelector("#liveNavButton");
+const selectNavButton = document.querySelector("#selectNavButton");
 const stopGrid = document.querySelector("#stopGrid");
 const stationGrid = document.querySelector("#stationGrid");
 const busSection = document.querySelector('[aria-label="Nearest bus stops"]');
 const trainSection = document.querySelector('[aria-label="Nearest train stations"]');
+const selectedStopPanel = document.querySelector("#selectedStopPanel");
+const selectedStopTitle = document.querySelector("#selectedStopTitle");
 const stopTemplate = document.querySelector("#stopTemplate");
 const statusText = document.querySelector("#statusText");
 const statusDot = document.querySelector("#statusDot");
@@ -33,13 +56,13 @@ const latInput = document.querySelector("#latInput");
 const lonInput = document.querySelector("#lonInput");
 const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
+const areaSelect = document.querySelector("#areaSelect");
+const selectedStopSelect = document.querySelector("#selectedStopSelect");
 
 locateButton.addEventListener("click", locateUser);
 demoButton.addEventListener("click", () => loadNearby(DEMO_LOCATION));
 refreshButton.addEventListener("click", () => {
-  if (state.lastLocation) {
-    loadNearby(state.lastLocation);
-  } else {
+  if (!refreshActivePage()) {
     setStatus("Choose a location before refreshing.", "waiting");
   }
 });
@@ -59,6 +82,14 @@ manualForm.addEventListener("submit", (event) => {
 
 busSelect.addEventListener("change", handleDisplayChange);
 trainSelect.addEventListener("change", handleDisplayChange);
+liveNavButton.addEventListener("click", () => showPage("live"));
+selectNavButton.addEventListener("click", () => showPage("select"));
+areaSelect.addEventListener("change", () => loadSelectedAreaStops());
+selectedStopSelect.addEventListener("change", () => {
+  const stop = state.selectedAreaStops.find((item) => getStopId(item) === selectedStopSelect.value);
+  if (stop) loadSelectedStopArrivals(stop);
+});
+populateAreas();
 startAutoRefresh();
 
 function locateUser() {
@@ -176,6 +207,94 @@ async function loadNearby(location) {
   }
 }
 
+async function loadSelectedAreaStops() {
+  const area = getSelectedArea();
+  if (!area) return;
+
+  state.loading = true;
+  state.selectedStop = null;
+  state.selectedAreaStops = [];
+  selectedStopSelect.disabled = true;
+  selectedStopSelect.innerHTML = `<option>Loading bus stops...</option>`;
+  selectedStopTitle.textContent = "Select a bus stop";
+  selectedStopPanel.innerHTML = `<div class="empty-state">Loading bus stops in ${escapeHtml(area.label)}...</div>`;
+  setStatus(`Loading bus stops in ${area.label}...`, "waiting");
+  lastUpdated.textContent = "";
+
+  try {
+    const stops = await findBusStopsForArea(area);
+    state.selectedAreaStops = stops;
+
+    if (!stops.length) {
+      selectedStopSelect.innerHTML = `<option>No bus stops found</option>`;
+      selectedStopPanel.innerHTML = `<div class="empty-state">No bus stops were found for this area.</div>`;
+      setStatus(`No bus stops were found in ${area.label}.`, "error");
+      return;
+    }
+
+    selectedStopSelect.innerHTML = stops
+      .map((stop) => `<option value="${escapeHtml(getStopId(stop))}">${escapeHtml(formatStopOption(stop))}</option>`)
+      .join("");
+    selectedStopSelect.disabled = false;
+    const firstResult = await findFirstStopWithArrivals(stops);
+    state.selectedStop = firstResult.stop;
+    selectedStopSelect.value = getStopId(firstResult.stop);
+    selectedStopTitle.textContent = cleanStationName(firstResult.stop.commonName || "Selected bus stop");
+    renderSelectedStop(firstResult.stop, firstResult.arrivals);
+    setSelectedStopStatus(firstResult.stop, firstResult.arrivals.length);
+    lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  } catch (error) {
+    console.error(error);
+    selectedStopSelect.innerHTML = `<option>Could not load stops</option>`;
+    selectedStopPanel.innerHTML = `<div class="empty-state">Bus stops could not be loaded. Please try again.</div>`;
+    setStatus("Bus stops could not be loaded. Please try again.", "error");
+  } finally {
+    state.loading = false;
+    scheduleNextRefresh();
+  }
+}
+
+async function loadSelectedStopArrivals(stop) {
+  if (state.loading) {
+    state.selectedStop = stop;
+    state.pendingReload = true;
+    return;
+  }
+
+  state.loading = true;
+  state.selectedStop = stop;
+  selectedStopTitle.textContent = cleanStationName(stop.commonName || "Selected bus stop");
+  selectedStopPanel.innerHTML = "";
+  renderSkeletons(selectedStopPanel, 1);
+  setStatus(`Loading buses for ${cleanStationName(stop.commonName || "selected bus stop")}...`, "waiting");
+  lastUpdated.textContent = "";
+
+  try {
+    const arrivals = await getArrivals(getStopId(stop), "bus", SELECTED_STOP_ARRIVALS);
+    renderSelectedStop(stop, arrivals);
+    setSelectedStopStatus(stop, arrivals.length);
+    lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  } catch (error) {
+    console.error(error);
+    selectedStopPanel.innerHTML = `<div class="empty-state">Live buses could not be loaded for this stop.</div>`;
+    setStatus("Live buses could not be loaded for this stop.", "error");
+  } finally {
+    state.loading = false;
+    if (state.pendingReload) {
+      state.pendingReload = false;
+      window.setTimeout(() => refreshActivePage(), 0);
+    } else {
+      scheduleNextRefresh();
+    }
+  }
+}
+
 async function findClosestBusStops(location) {
   return findClosestPlaces({
     ...location,
@@ -184,6 +303,28 @@ async function findClosestBusStops(location) {
     targetCount: MAX_BUS_STOPS,
     candidateCount: CANDIDATE_BUS_STOPS,
   });
+}
+
+async function findBusStopsForArea(location) {
+  return findClosestPlaces({
+    ...location,
+    stopTypes: "NaptanPublicBusCoachTram",
+    modes: "bus",
+    targetCount: 12,
+    candidateCount: SELECTED_STOP_CANDIDATES,
+  });
+}
+
+async function findFirstStopWithArrivals(stops) {
+  for (const stop of stops.slice(0, 10)) {
+    const arrivals = await getArrivals(getStopId(stop), "bus", SELECTED_STOP_ARRIVALS);
+    if (arrivals.length > 0) return { stop, arrivals };
+  }
+
+  return {
+    stop: stops[0],
+    arrivals: await getArrivals(getStopId(stops[0]), "bus", SELECTED_STOP_ARRIVALS),
+  };
 }
 
 async function findClosestStations(location) {
@@ -220,13 +361,13 @@ async function findClosestPlaces({ lat, lon, stopTypes, modes, targetCount, cand
   return [];
 }
 
-async function getArrivals(stopId, type) {
+async function getArrivals(stopId, type, limit = MAX_ARRIVALS) {
   const arrivals = await fetchJson(`${API_BASE}/StopPoint/${encodeURIComponent(stopId)}/Arrivals`);
 
   return arrivals
     .filter((arrival) => (type === "bus" ? arrival.modeName === "bus" : STATION_MODES.has(arrival.modeName)))
     .sort((a, b) => a.timeToStation - b.timeToStation)
-    .slice(0, MAX_ARRIVALS);
+    .slice(0, limit);
 }
 
 async function fetchJson(url) {
@@ -253,6 +394,11 @@ function renderStations(stationsWithDepartures) {
   stationsWithDepartures.forEach(({ stop, arrivals }) => {
     stationGrid.append(renderCard({ stop, arrivals, type: "train" }));
   });
+}
+
+function renderSelectedStop(stop, arrivals) {
+  selectedStopPanel.innerHTML = "";
+  selectedStopPanel.append(renderCard({ stop, arrivals, type: "bus" }));
 }
 
 function renderCard({ stop, arrivals, type }) {
@@ -321,6 +467,76 @@ function handleDisplayChange() {
   }
 }
 
+function showPage(page) {
+  state.activePage = page;
+  livePage.hidden = page !== "live";
+  selectPage.hidden = page !== "select";
+  liveNavButton.classList.toggle("active", page === "live");
+  selectNavButton.classList.toggle("active", page === "select");
+  liveNavButton.setAttribute("aria-pressed", String(page === "live"));
+  selectNavButton.setAttribute("aria-pressed", String(page === "select"));
+
+  if (page === "select" && !state.selectedAreaStops.length) {
+    loadSelectedAreaStops();
+    return;
+  }
+
+  if (page === "live") {
+    if (state.lastLocation) {
+      setStatus("Live nearby arrivals are ready.", "ready");
+    } else {
+      setStatus("Choose a location to see nearby buses and trains.", "waiting");
+    }
+  } else if (state.selectedStop) {
+    setStatus(`Showing selected stop: ${cleanStationName(state.selectedStop.commonName || "bus stop")}.`, "ready");
+  }
+}
+
+function refreshActivePage() {
+  if (state.activePage === "select") {
+    if (state.selectedStop) {
+      loadSelectedStopArrivals(state.selectedStop);
+      return true;
+    }
+    loadSelectedAreaStops();
+    return true;
+  }
+
+  if (state.lastLocation) {
+    loadNearby(state.lastLocation);
+    return true;
+  }
+
+  return false;
+}
+
+function populateAreas() {
+  areaSelect.innerHTML = AREAS.map((area, index) => `<option value="${index}">${escapeHtml(area.label)}</option>`).join("");
+}
+
+function getSelectedArea() {
+  return AREAS[Number.parseInt(areaSelect.value, 10)] || AREAS[0];
+}
+
+function getStopId(stop) {
+  return stop.id || stop.naptanId;
+}
+
+function formatStopOption(stop) {
+  const name = cleanStationName(stop.commonName || "Unnamed bus stop");
+  const letter = stop.stopLetter || stop.indicator || "Bus";
+  return `${name} ${letter} - ${formatDistance(stop.distance)}`;
+}
+
+function setSelectedStopStatus(stop, arrivalCount) {
+  const stopName = cleanStationName(stop.commonName || "selected bus stop");
+  if (arrivalCount > 0) {
+    setStatus(`Showing next ${arrivalCount} buses for ${stopName}.`, "ready");
+  } else {
+    setStatus(`No live buses for ${stopName} right now.`, "waiting");
+  }
+}
+
 function getDisplayOptions() {
   return {
     showBus: busSelect.value === "show",
@@ -350,8 +566,8 @@ function formatResultStatus(busCount, trainCount, { showBus, showTrain }) {
 function startAutoRefresh() {
   scheduleNextRefresh();
   state.autoRefreshTimer = window.setInterval(() => {
-    if (state.nextRefreshAt && Date.now() >= state.nextRefreshAt && state.lastLocation && !state.loading) {
-      loadNearby(state.lastLocation);
+    if (state.nextRefreshAt && Date.now() >= state.nextRefreshAt && !state.loading) {
+      if (!refreshActivePage()) scheduleNextRefresh();
       return;
     }
 
@@ -365,13 +581,17 @@ function scheduleNextRefresh() {
 }
 
 function updateRefreshCountdown() {
-  if (!state.lastLocation) {
+  if (!hasRefreshTarget()) {
     refreshCountdown.textContent = `Auto refresh every ${AUTO_REFRESH_SECONDS}s`;
     return;
   }
 
   const seconds = Math.max(0, Math.ceil((state.nextRefreshAt - Date.now()) / 1000));
   refreshCountdown.textContent = `Auto refresh in ${seconds}s`;
+}
+
+function hasRefreshTarget() {
+  return state.activePage === "select" ? Boolean(state.selectedStop) : Boolean(state.lastLocation);
 }
 
 function formatDistance(distance) {

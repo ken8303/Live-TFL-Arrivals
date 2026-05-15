@@ -74,6 +74,38 @@ h1 {
   gap: 10px;
 }
 
+.page-nav {
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  margin-bottom: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.nav-tab {
+  min-height: 40px;
+  padding: 0 16px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-weight: 900;
+}
+
+.nav-tab.active {
+  color: #fff;
+  background: var(--blue);
+}
+
+.nav-tab:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 94, 184, 0.16);
+}
+
 .icon-button,
 .primary-button,
 .secondary-button {
@@ -167,6 +199,19 @@ svg {
   display: grid;
   grid-template-columns: repeat(2, minmax(100px, 1fr));
   gap: 12px;
+}
+
+.select-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.45fr) 1fr;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  margin-bottom: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
 }
 
 label {
@@ -307,6 +352,11 @@ select:focus {
 
 .station-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.selected-stop-panel {
+  display: grid;
+  max-width: 720px;
 }
 
 .stop-card {
@@ -495,7 +545,8 @@ select:focus {
   }
 
   .controls,
-  .manual-form {
+  .manual-form,
+  .select-controls {
     grid-template-columns: 1fr;
   }
 
