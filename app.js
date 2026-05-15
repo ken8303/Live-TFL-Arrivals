@@ -9,6 +9,7 @@ const STATION_MODES = new Set(["tube", "dlr", "overground", "elizabeth-line", "n
 const AUTO_REFRESH_SECONDS = 30;
 const SELECTED_STOP_ARRIVALS = 5;
 const SELECTED_STOP_CANDIDATES = 30;
+const SELECTED_TRAIN_ARRIVALS = 5;
 const AREAS = [
   { label: "Central London", lat: 51.5074, lon: -0.1278 },
   { label: "King's Cross", lat: 51.5308, lon: -0.1238 },
@@ -21,6 +22,12 @@ const AREAS = [
   { label: "Shoreditch", lat: 51.5235, lon: -0.0754 },
   { label: "Hammersmith", lat: 51.4927, lon: -0.2259 },
 ];
+const TRAIN_STATIONS = [
+  { name: "Charing Cross", id: "940GZZLUCHX", lat: 51.50741, lon: -0.127277 },
+  { name: "King's Cross St. Pancras", id: "940GZZLUKSX", lat: 51.530663, lon: -0.123194 },
+  { name: "Victoria", id: "940GZZLUVIC", lat: 51.496424, lon: -0.143921 },
+  { name: "Paddington", id: "940GZZLUPAC", lat: 51.515184, lon: -0.175539 },
+];
 
 const state = {
   activePage: "live",
@@ -29,20 +36,27 @@ const state = {
   pendingReload: false,
   selectedAreaStops: [],
   selectedStop: null,
+  selectedTrainStation: null,
+  selectedTrainLine: null,
   nextRefreshAt: null,
   autoRefreshTimer: null,
 };
 
 const livePage = document.querySelector("#livePage");
 const selectPage = document.querySelector("#selectPage");
+const selectTrainPage = document.querySelector("#selectTrainPage");
 const liveNavButton = document.querySelector("#liveNavButton");
 const selectNavButton = document.querySelector("#selectNavButton");
+const selectTrainNavButton = document.querySelector("#selectTrainNavButton");
 const stopGrid = document.querySelector("#stopGrid");
 const stationGrid = document.querySelector("#stationGrid");
 const busSection = document.querySelector('[aria-label="Nearest bus stops"]');
 const trainSection = document.querySelector('[aria-label="Nearest train stations"]');
 const selectedStopPanel = document.querySelector("#selectedStopPanel");
 const selectedStopTitle = document.querySelector("#selectedStopTitle");
+const selectedTrainPanel = document.querySelector("#selectedTrainPanel");
+const selectedTrainTitle = document.querySelector("#selectedTrainTitle");
+const lineStatusPanel = document.querySelector("#lineStatusPanel");
 const stopTemplate = document.querySelector("#stopTemplate");
 const statusText = document.querySelector("#statusText");
 const statusDot = document.querySelector("#statusDot");
@@ -58,6 +72,8 @@ const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
 const areaSelect = document.querySelector("#areaSelect");
 const selectedStopSelect = document.querySelector("#selectedStopSelect");
+const trainStationSelect = document.querySelector("#trainStationSelect");
+const trainLineSelect = document.querySelector("#trainLineSelect");
 
 locateButton.addEventListener("click", locateUser);
 demoButton.addEventListener("click", () => loadNearby(DEMO_LOCATION));
@@ -84,12 +100,19 @@ busSelect.addEventListener("change", handleDisplayChange);
 trainSelect.addEventListener("change", handleDisplayChange);
 liveNavButton.addEventListener("click", () => showPage("live"));
 selectNavButton.addEventListener("click", () => showPage("select"));
+selectTrainNavButton.addEventListener("click", () => showPage("train"));
 areaSelect.addEventListener("change", () => loadSelectedAreaStops());
 selectedStopSelect.addEventListener("change", () => {
   const stop = state.selectedAreaStops.find((item) => getStopId(item) === selectedStopSelect.value);
   if (stop) loadSelectedStopArrivals(stop);
 });
+trainStationSelect.addEventListener("change", () => loadSelectedTrainStation());
+trainLineSelect.addEventListener("change", () => {
+  const station = getSelectedTrainStation();
+  if (station && trainLineSelect.value) loadSelectedTrainLine(station, trainLineSelect.value);
+});
 populateAreas();
+populateTrainStations();
 startAutoRefresh();
 
 function locateUser() {
@@ -295,6 +318,94 @@ async function loadSelectedStopArrivals(stop) {
   }
 }
 
+async function loadSelectedTrainStation() {
+  const station = getSelectedTrainStation();
+  if (!station) return;
+
+  state.loading = true;
+  state.selectedTrainStation = station;
+  state.selectedTrainLine = null;
+  trainLineSelect.disabled = true;
+  trainLineSelect.innerHTML = `<option>Loading train lines...</option>`;
+  selectedTrainTitle.textContent = station.name;
+  lineStatusPanel.innerHTML = "";
+  selectedTrainPanel.innerHTML = `<div class="empty-state">Loading train lines for ${escapeHtml(station.name)}...</div>`;
+  setStatus(`Loading train lines for ${station.name}...`, "waiting");
+  lastUpdated.textContent = "";
+
+  try {
+    const arrivals = await getStationTrainArrivals(station.id);
+    const lines = getArrivalLines(arrivals);
+
+    if (!lines.length) {
+      trainLineSelect.innerHTML = `<option>No live train lines found</option>`;
+      selectedTrainPanel.innerHTML = `<div class="empty-state">No live train arrivals were found for this station right now.</div>`;
+      setStatus(`No live train arrivals were found for ${station.name} right now.`, "waiting");
+      return;
+    }
+
+    trainLineSelect.innerHTML = lines
+      .map((line) => `<option value="${escapeHtml(line.id)}">${escapeHtml(line.name)}</option>`)
+      .join("");
+    trainLineSelect.disabled = false;
+    state.loading = false;
+    await loadSelectedTrainLine(station, lines[0].id);
+  } catch (error) {
+    console.error(error);
+    trainLineSelect.innerHTML = `<option>Could not load lines</option>`;
+    selectedTrainPanel.innerHTML = `<div class="empty-state">Train lines could not be loaded. Please try again.</div>`;
+    setStatus("Train lines could not be loaded. Please try again.", "error");
+  } finally {
+    state.loading = false;
+    if (!state.selectedTrainLine) scheduleNextRefresh();
+  }
+}
+
+async function loadSelectedTrainLine(station, lineId) {
+  if (state.loading) {
+    state.selectedTrainStation = station;
+    state.selectedTrainLine = lineId;
+    state.pendingReload = true;
+    return;
+  }
+
+  state.loading = true;
+  state.selectedTrainStation = station;
+  state.selectedTrainLine = lineId;
+  trainLineSelect.value = lineId;
+  selectedTrainTitle.textContent = station.name;
+  lineStatusPanel.innerHTML = `<div class="line-status loading">Loading line status...</div>`;
+  selectedTrainPanel.innerHTML = "";
+  renderSkeletons(selectedTrainPanel, 1);
+  setStatus(`Loading ${formatLineName(lineId)} arrivals at ${station.name}...`, "waiting");
+  lastUpdated.textContent = "";
+
+  try {
+    const [allArrivals, lineStatus] = await Promise.all([getStationTrainArrivals(station.id), getLineStatus(lineId)]);
+    const arrivals = allArrivals.filter((arrival) => arrival.lineId === lineId).slice(0, SELECTED_TRAIN_ARRIVALS);
+    renderLineStatus(lineStatus, lineId);
+    renderSelectedTrainStation(station, arrivals, lineId);
+    setTrainStationStatus(station, lineId, arrivals.length, lineStatus);
+    lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  } catch (error) {
+    console.error(error);
+    lineStatusPanel.innerHTML = "";
+    selectedTrainPanel.innerHTML = `<div class="empty-state">Live train arrivals could not be loaded.</div>`;
+    setStatus("Live train arrivals could not be loaded.", "error");
+  } finally {
+    state.loading = false;
+    if (state.pendingReload) {
+      state.pendingReload = false;
+      window.setTimeout(() => refreshActivePage(), 0);
+    } else {
+      scheduleNextRefresh();
+    }
+  }
+}
+
 async function findClosestBusStops(location) {
   return findClosestPlaces({
     ...location,
@@ -370,6 +481,19 @@ async function getArrivals(stopId, type, limit = MAX_ARRIVALS) {
     .slice(0, limit);
 }
 
+async function getStationTrainArrivals(stationId) {
+  const arrivals = await fetchJson(`${API_BASE}/StopPoint/${encodeURIComponent(stationId)}/Arrivals`);
+
+  return arrivals
+    .filter((arrival) => STATION_MODES.has(arrival.modeName))
+    .sort((a, b) => a.timeToStation - b.timeToStation);
+}
+
+async function getLineStatus(lineId) {
+  const statuses = await fetchJson(`${API_BASE}/Line/${encodeURIComponent(lineId)}/Status`);
+  return statuses[0] || null;
+}
+
 async function fetchJson(url) {
   const response = await fetch(url);
 
@@ -399,6 +523,38 @@ function renderStations(stationsWithDepartures) {
 function renderSelectedStop(stop, arrivals) {
   selectedStopPanel.innerHTML = "";
   selectedStopPanel.append(renderCard({ stop, arrivals, type: "bus" }));
+}
+
+function renderSelectedTrainStation(station, arrivals, lineId) {
+  selectedTrainPanel.innerHTML = "";
+  selectedTrainPanel.append(
+    renderCard({
+      stop: {
+        commonName: station.name,
+        lat: station.lat,
+        lon: station.lon,
+        lines: [{ id: lineId, name: arrivals[0]?.lineName || formatLineName(lineId) }],
+      },
+      arrivals,
+      type: "train",
+    }),
+  );
+}
+
+function renderLineStatus(lineStatus, lineId) {
+  const lineName = lineStatus?.name || formatLineName(lineId);
+  const status = lineStatus?.lineStatuses?.[0];
+  const statusTextValue = status?.statusSeverityDescription || "Status unavailable";
+  const reason = status?.reason ? `<p>${escapeHtml(status.reason)}</p>` : "";
+  const isGood = statusTextValue.toLowerCase() === "good service";
+
+  lineStatusPanel.innerHTML = `
+    <div class="line-status ${isGood ? "good" : "notice"}">
+      <strong>${escapeHtml(lineName)}</strong>
+      <span>${escapeHtml(statusTextValue)}</span>
+      ${reason}
+    </div>
+  `;
 }
 
 function renderCard({ stop, arrivals, type }) {
@@ -471,13 +627,21 @@ function showPage(page) {
   state.activePage = page;
   livePage.hidden = page !== "live";
   selectPage.hidden = page !== "select";
+  selectTrainPage.hidden = page !== "train";
   liveNavButton.classList.toggle("active", page === "live");
   selectNavButton.classList.toggle("active", page === "select");
+  selectTrainNavButton.classList.toggle("active", page === "train");
   liveNavButton.setAttribute("aria-pressed", String(page === "live"));
   selectNavButton.setAttribute("aria-pressed", String(page === "select"));
+  selectTrainNavButton.setAttribute("aria-pressed", String(page === "train"));
 
   if (page === "select" && !state.selectedAreaStops.length) {
     loadSelectedAreaStops();
+    return;
+  }
+
+  if (page === "train" && !state.selectedTrainStation) {
+    loadSelectedTrainStation();
     return;
   }
 
@@ -487,8 +651,10 @@ function showPage(page) {
     } else {
       setStatus("Choose a location to see nearby buses and trains.", "waiting");
     }
-  } else if (state.selectedStop) {
+  } else if (page === "select" && state.selectedStop) {
     setStatus(`Showing selected stop: ${cleanStationName(state.selectedStop.commonName || "bus stop")}.`, "ready");
+  } else if (page === "train" && state.selectedTrainStation) {
+    setStatus(`Showing selected station: ${state.selectedTrainStation.name}.`, "ready");
   }
 }
 
@@ -499,6 +665,15 @@ function refreshActivePage() {
       return true;
     }
     loadSelectedAreaStops();
+    return true;
+  }
+
+  if (state.activePage === "train") {
+    if (state.selectedTrainStation && state.selectedTrainLine) {
+      loadSelectedTrainLine(state.selectedTrainStation, state.selectedTrainLine);
+      return true;
+    }
+    loadSelectedTrainStation();
     return true;
   }
 
@@ -514,8 +689,18 @@ function populateAreas() {
   areaSelect.innerHTML = AREAS.map((area, index) => `<option value="${index}">${escapeHtml(area.label)}</option>`).join("");
 }
 
+function populateTrainStations() {
+  trainStationSelect.innerHTML = TRAIN_STATIONS.map(
+    (station, index) => `<option value="${index}">${escapeHtml(station.name)}</option>`,
+  ).join("");
+}
+
 function getSelectedArea() {
   return AREAS[Number.parseInt(areaSelect.value, 10)] || AREAS[0];
+}
+
+function getSelectedTrainStation() {
+  return TRAIN_STATIONS[Number.parseInt(trainStationSelect.value, 10)] || TRAIN_STATIONS[0];
 }
 
 function getStopId(stop) {
@@ -535,6 +720,35 @@ function setSelectedStopStatus(stop, arrivalCount) {
   } else {
     setStatus(`No live buses for ${stopName} right now.`, "waiting");
   }
+}
+
+function setTrainStationStatus(station, lineId, arrivalCount, lineStatus) {
+  const lineName = lineStatus?.name || formatLineName(lineId);
+  if (arrivalCount > 0) {
+    setStatus(`Showing next ${arrivalCount} ${lineName} arrivals at ${station.name}.`, "ready");
+  } else {
+    setStatus(`No live ${lineName} arrivals at ${station.name} right now.`, "waiting");
+  }
+}
+
+function getArrivalLines(arrivals) {
+  const lineMap = new Map();
+  arrivals.forEach((arrival) => {
+    if (arrival.lineId && !lineMap.has(arrival.lineId)) {
+      lineMap.set(arrival.lineId, {
+        id: arrival.lineId,
+        name: arrival.lineName || formatLineName(arrival.lineId),
+      });
+    }
+  });
+  return [...lineMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function formatLineName(lineId) {
+  return lineId
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function getDisplayOptions() {
@@ -591,7 +805,9 @@ function updateRefreshCountdown() {
 }
 
 function hasRefreshTarget() {
-  return state.activePage === "select" ? Boolean(state.selectedStop) : Boolean(state.lastLocation);
+  if (state.activePage === "select") return Boolean(state.selectedStop);
+  if (state.activePage === "train") return Boolean(state.selectedTrainStation && state.selectedTrainLine);
+  return Boolean(state.lastLocation);
 }
 
 function formatDistance(distance) {

@@ -25,6 +25,7 @@
       <nav class="page-nav" aria-label="Page navigation">
         <button class="nav-tab active" id="liveNavButton" type="button" aria-pressed="true">Live</button>
         <button class="nav-tab" id="selectNavButton" type="button" aria-pressed="false">Select bus stop</button>
+        <button class="nav-tab" id="selectTrainNavButton" type="button" aria-pressed="false">Select train station</button>
       </nav>
 
       <section class="status-panel" aria-live="polite">
@@ -114,6 +115,30 @@
             <p>Next 5 buses</p>
           </div>
           <div class="selected-stop-panel" id="selectedStopPanel"></div>
+        </section>
+      </div>
+
+      <div id="selectTrainPage" hidden>
+        <section class="select-controls" aria-label="Select train station controls">
+          <label>
+            Train station
+            <select id="trainStationSelect"></select>
+          </label>
+          <label>
+            Train line
+            <select id="trainLineSelect" disabled>
+              <option>Choose a station first</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="result-section" aria-label="Selected train station arrivals">
+          <div class="section-heading">
+            <h2 id="selectedTrainTitle">Select a train station</h2>
+            <p>Next 5 arrivals</p>
+          </div>
+          <div class="line-status-panel" id="lineStatusPanel"></div>
+          <div class="selected-train-panel" id="selectedTrainPanel"></div>
         </section>
       </div>
     </main>
