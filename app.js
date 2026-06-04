@@ -30,6 +30,7 @@ const TRAIN_STATIONS = [
   {
     name: "Paddington Rail",
     id: "910GPADTON",
+    crs: "PAD",
     lat: 51.51603,
     lon: -0.17619,
     lines: [
@@ -499,8 +500,11 @@ async function loadSelectedTrainLine(station, lineId) {
   lastUpdated.textContent = "";
 
   try {
-    const [allArrivals, lineStatus] = await Promise.all([getStationTrainArrivals(station.id), getLineStatus(lineId)]);
-    const arrivals = filterArrivalsByLine(allArrivals, lineId).slice(0, SELECTED_TRAIN_ARRIVALS);
+    const [allArrivals, lineStatus] = await Promise.all([getTrainArrivalsForLine(station, lineId), getLineStatus(lineId)]);
+    const arrivals =
+      lineId === "national-rail" && station.crs
+        ? allArrivals.slice(0, SELECTED_TRAIN_ARRIVALS)
+        : filterArrivalsByLine(allArrivals, lineId).slice(0, SELECTED_TRAIN_ARRIVALS);
     renderLineStatus(lineStatus, lineId);
     renderSelectedTrainStation(station, arrivals, lineId);
     setTrainStationStatus(station, lineId, arrivals.length, lineStatus);
@@ -654,6 +658,19 @@ async function getStationTrainArrivals(stationId) {
   return arrivals
     .filter((arrival) => STATION_MODES.has(arrival.modeName))
     .sort((a, b) => a.timeToStation - b.timeToStation);
+}
+
+async function getTrainArrivalsForLine(station, lineId) {
+  if (lineId === "national-rail" && station.crs) {
+    return getNationalRailArrivals(station.crs, SELECTED_TRAIN_ARRIVALS);
+  }
+
+  return getStationTrainArrivals(station.id);
+}
+
+async function getNationalRailArrivals(crs, limit) {
+  const data = await fetchJson(`/api/national-rail/arrivals?crs=${encodeURIComponent(crs)}&rows=${limit}`);
+  return data.arrivals || [];
 }
 
 async function getLineStatus(lineId) {
