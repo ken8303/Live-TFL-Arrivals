@@ -1055,13 +1055,16 @@ function setTrainStationStatus(station, lineId, arrivalCount, lineStatus) {
 }
 
 function getArrivalLines(arrivals, station) {
+  if ((station.lines || []).length) {
+    return [...station.lines]
+      .map((line) => ({
+        id: line.id,
+        name: line.name || formatLineName(line.id),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   const lineMap = new Map();
-  (station.lines || []).forEach((line) => {
-    lineMap.set(line.id, {
-      id: line.id,
-      name: line.name || formatLineName(line.id),
-    });
-  });
   arrivals.forEach((arrival) => {
     if (arrival.lineId && !lineMap.has(arrival.lineId)) {
       lineMap.set(arrival.lineId, {
