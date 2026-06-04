@@ -26,11 +26,22 @@ Never add National Rail credentials to `app.js`, `index.html`, or any other brow
 
 The server reads credentials from `.env`, calls National Rail from the backend, and only sends safe arrival data back to the browser.
 
-## Cloudflare Pages
+## Cloudflare
 
-Cloudflare Pages does not run `server.js`. The protected National Rail endpoint is also implemented as Pages Functions in `functions/api/national-rail/`.
+Cloudflare does not run `server.js`. That file is only for local development.
 
-Use these Cloudflare build settings:
+This project supports both deployment styles:
+
+- Cloudflare Workers with `npx wrangler deploy`, using `worker.js`, `wrangler.jsonc`, and `public/`.
+- Cloudflare Pages Functions, using `functions/api/national-rail/`.
+
+If your Cloudflare project uses a deploy command, use:
+
+```text
+npx wrangler deploy
+```
+
+If your Cloudflare project is a Pages project, use these settings instead:
 
 ```text
 Framework preset: None / Static
@@ -39,9 +50,7 @@ Build output directory: /
 Deploy command: leave empty
 ```
 
-Do not use `npx wrangler deploy` as the deploy command for this Pages project.
-
-In Cloudflare, open your Pages project and add the same secret values under:
+In Cloudflare, open your project and add the same secret values under:
 
 ```text
 Settings > Variables and Secrets
