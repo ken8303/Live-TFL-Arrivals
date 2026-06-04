@@ -810,6 +810,7 @@ function renderCard({ stop, arrivals, type, origin = null, boardStation = null }
         <span class="destination">
           <strong>${escapeHtml(formatDestinationText(arrival, boardStation))}</strong>
           <span>${escapeHtml(formatJourneyDetail(arrival, boardStation))}</span>
+          ${formatCallingPoints(arrival)}
         </span>
         <span class="eta">${formatEta(arrival.timeToStation)}</span>
       `;
@@ -1240,6 +1241,17 @@ function formatJourneyDetail(arrival, boardStation) {
     return `Leaves ${boardStation.name} at ${time}${platform}`;
   }
   return `${time}${platform}`;
+}
+
+function formatCallingPoints(arrival) {
+  if (arrival.modeName !== "national-rail" || !(arrival.callingPoints || []).length) return "";
+  return `<span>${escapeHtml(`Stops at ${formatCallingPointList(arrival.callingPoints)}`)}</span>`;
+}
+
+function formatCallingPointList(points) {
+  const names = points.map((point) => cleanStationName(point)).filter(Boolean);
+  if (names.length <= 4) return names.join(", ");
+  return `${names.slice(0, 4).join(", ")} +${names.length - 4} more`;
 }
 
 function getMapUrl(stop) {

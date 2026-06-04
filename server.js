@@ -197,6 +197,7 @@ function parseDarwinServices(xml, rows) {
       lineName: getTagText(service, "operator") || "National Rail",
       destinationName,
       platformName: getTagText(service, "platform") ? `Platform ${getTagText(service, "platform")}` : "",
+      callingPoints: getCallingPoints(service),
       expectedArrival: getExpectedDate(expected, scheduled),
       timeToStation: getTimeToStation(expected, scheduled),
     };
@@ -211,6 +212,13 @@ function getTagText(xml, tag) {
 function getDestinationName(service) {
   const destinationBlock = service.match(/<[^<>:]*:?destination\b[\s\S]*?<\/[^<>:]*:?destination>/i)?.[0] || "";
   return getTagText(destinationBlock, "locationName") || "Destination unavailable";
+}
+
+function getCallingPoints(service) {
+  const callingPointBlocks = service.match(/<[^<>:]*:?callingPoint\b[\s\S]*?<\/[^<>:]*:?callingPoint>/gi) || [];
+  return callingPointBlocks
+    .map((block) => getTagText(block, "locationName"))
+    .filter(Boolean);
 }
 
 function getExpectedDate(expected, scheduled) {
