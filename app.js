@@ -97,6 +97,9 @@ const latInput = document.querySelector("#latInput");
 const lonInput = document.querySelector("#lonInput");
 const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
+const liveMapPreview = document.querySelector("#liveMapPreview");
+const liveMapFrame = document.querySelector("#liveMapFrame");
+const mapPreviewText = document.querySelector("#mapPreviewText");
 const areaSelect = document.querySelector("#areaSelect");
 const selectedStopSelect = document.querySelector("#selectedStopSelect");
 const busStopSearchForm = document.querySelector("#busStopSearchForm");
@@ -187,6 +190,7 @@ async function loadNearby(location) {
 
   if (!options.showBus && !options.showTrain) {
     state.lastLocation = location;
+    updateLiveMap(location);
     stopGrid.innerHTML = "";
     stationGrid.innerHTML = "";
     setStatus("Turn on buses or trains to display live arrivals.", "waiting");
@@ -198,6 +202,7 @@ async function loadNearby(location) {
   state.loading = true;
   state.lastLocation = location;
   updateBookmarkUrl();
+  updateLiveMap(location);
   setStatus(`Looking for ${formatSelectedModes(options)} near ${location.label}...`, "waiting");
   lastUpdated.textContent = "";
   if (options.showBus) {
@@ -682,7 +687,7 @@ function renderStops(stopsWithArrivals) {
   stopGrid.innerHTML = "";
 
   stopsWithArrivals.forEach(({ stop, arrivals }) => {
-    stopGrid.append(renderCard({ stop, arrivals, type: "bus" }));
+    stopGrid.append(renderCard({ stop, arrivals, type: "bus", origin: state.lastLocation }));
   });
 }
 
@@ -690,7 +695,7 @@ function renderStations(stationsWithDepartures) {
   stationGrid.innerHTML = "";
 
   stationsWithDepartures.forEach(({ stop, arrivals }) => {
-    stationGrid.append(renderCard({ stop, arrivals, type: "train" }));
+    stationGrid.append(renderCard({ stop, arrivals, type: "train", origin: state.lastLocation }));
   });
 }
 
@@ -731,7 +736,7 @@ function renderLineStatus(lineStatus, lineId) {
   `;
 }
 
-function renderCard({ stop, arrivals, type }) {
+function renderCard({ stop, arrivals, type, origin = null }) {
   const node = stopTemplate.content.firstElementChild.cloneNode(true);
   const title = node.querySelector("h2");
   const meta = node.querySelector(".stop-meta");
@@ -741,7 +746,7 @@ function renderCard({ stop, arrivals, type }) {
 
   node.classList.toggle("station-card", isTrain);
   title.textContent = cleanStationName(stop.commonName || (isTrain ? "Unnamed station" : "Unnamed bus stop"));
-  meta.textContent = isTrain ? `${formatDistance(stop.distance)} away${getLineSummary(stop)}` : `${formatDistance(stop.distance)} away${getTowards(stop)}`;
+  meta.textContent = isTrain ? `${getTravelMeta(stop, origin)}${getLineSummary(stop)}` : `${getTravelMeta(stop, origin)}${getTowards(stop)}`;
   letter.textContent = isTrain ? "Train" : stop.stopLetter || stop.indicator || "Bus";
   node.href = getMapUrl(stop);
   node.setAttribute("aria-label", `Open ${title.textContent} in Google Maps`);
@@ -1061,6 +1066,20 @@ function formatResultStatus(busCount, trainCount, { showBus, showTrain }) {
   return "No arrivals selected.";
 }
 
+function updateLiveMap(location) {
+  const lat = Number(location?.lat);
+  const lon = Number(location?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    liveMapPreview.hidden = true;
+    liveMapFrame.removeAttribute("src");
+    return;
+  }
+
+  liveMapPreview.hidden = false;
+  mapPreviewText.textContent = location.label ? `Centered on ${location.label}` : "Current search area";
+  liveMapFrame.src = `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15&output=embed`;
+}
+
 function startAutoRefresh() {
   scheduleNextRefresh();
   state.autoRefreshTimer = window.setInterval(() => {
@@ -1098,6 +1117,42 @@ function formatDistance(distance) {
   if (!Number.isFinite(distance)) return "Nearby";
   if (distance < 1000) return `${Math.round(distance)} m`;
   return `${(distance / 1000).toFixed(1)} km`;
+}
+
+function getTravelMeta(stop, origin) {
+  const distance = Number.isFinite(stop.distance) ? stop.distance : getDistanceMeters(origin, stop);
+  const walkTime = formatWalkTime(distance);
+  return `${formatDistance(distance)} away${walkTime ? `, ${walkTime} walk` : ""}`;
+}
+
+function getDistanceMeters(origin, stop) {
+  const originLat = Number(origin?.lat);
+  const originLon = Number(origin?.lon);
+  const stopLat = Number(stop?.lat);
+  const stopLon = Number(stop?.lon);
+  if (![originLat, originLon, stopLat, stopLon].every(Number.isFinite)) return Number.NaN;
+
+  const earthRadiusMeters = 6371e3;
+  const originRadians = toRadians(originLat);
+  const stopRadians = toRadians(stopLat);
+  const latDelta = toRadians(stopLat - originLat);
+  const lonDelta = toRadians(stopLon - originLon);
+  const angle =
+    Math.sin(latDelta / 2) * Math.sin(latDelta / 2) +
+    Math.cos(originRadians) * Math.cos(stopRadians) * Math.sin(lonDelta / 2) * Math.sin(lonDelta / 2);
+
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(angle), Math.sqrt(1 - angle));
+}
+
+function toRadians(value) {
+  return (value * Math.PI) / 180;
+}
+
+function formatWalkTime(distance) {
+  if (!Number.isFinite(distance)) return "";
+  const walkingDistance = distance * 1.25;
+  const minutes = Math.max(1, Math.round(walkingDistance / 80));
+  return minutes === 1 ? "1 min" : `${minutes} min`;
 }
 
 function getTowards(stop) {

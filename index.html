@@ -78,6 +78,19 @@
           </form>
         </section>
 
+        <section class="map-preview" id="liveMapPreview" aria-label="Live map preview" hidden>
+          <div class="section-heading">
+            <h2>Map Preview</h2>
+            <p id="mapPreviewText">Current search area</p>
+          </div>
+          <iframe
+            id="liveMapFrame"
+            title="Map preview"
+            loading="lazy"
+            referrerpolicy="no-referrer-when-downgrade"
+          ></iframe>
+        </section>
+
         <section class="result-section" aria-label="Nearest bus stops">
           <div class="section-heading">
             <h2>Closest Bus Stops</h2>

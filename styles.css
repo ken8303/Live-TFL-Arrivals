@@ -327,6 +327,19 @@ select:focus {
   margin-top: 20px;
 }
 
+.map-preview {
+  margin-top: 20px;
+}
+
+.map-preview iframe {
+  width: 100%;
+  min-height: 280px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
 .section-heading {
   display: flex;
   align-items: end;
@@ -627,5 +640,9 @@ select:focus {
 
   .refresh-countdown {
     white-space: normal;
+  }
+
+  .map-preview iframe {
+    min-height: 220px;
   }
 }
