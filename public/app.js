@@ -120,7 +120,8 @@ const lonInput = document.querySelector("#lonInput");
 const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
 const liveMapPreview = document.querySelector("#liveMapPreview");
-const liveMapFrame = document.querySelector("#liveMapFrame");
+const liveMapCanvas = document.querySelector("#liveMapCanvas");
+const liveMapLegend = document.querySelector("#liveMapLegend");
 const mapPreviewText = document.querySelector("#mapPreviewText");
 const areaSelect = document.querySelector("#areaSelect");
 const selectedStopSelect = document.querySelector("#selectedStopSelect");
@@ -273,6 +274,7 @@ async function loadNearby(location) {
 
     if (options.showBus) renderStops(stopsWithArrivals);
     if (options.showTrain) renderStations(stationsWithDepartures);
+    updateLiveMap(location, buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options));
     setStatus(formatResultStatus(stopsWithArrivals.length, stationsWithDepartures.length, options), "ready");
     lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
       hour: "2-digit",
@@ -1126,18 +1128,136 @@ function formatResultStatus(busCount, trainCount, { showBus, showTrain }) {
   return "No arrivals selected.";
 }
 
-function updateLiveMap(location) {
+function updateLiveMap(location, points = []) {
   const lat = Number(location?.lat);
   const lon = Number(location?.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     liveMapPreview.hidden = true;
-    liveMapFrame.removeAttribute("src");
+    liveMapCanvas.innerHTML = "";
+    liveMapLegend.innerHTML = "";
     return;
   }
 
   liveMapPreview.hidden = false;
-  mapPreviewText.textContent = location.label ? `Centered on ${location.label}` : "Current search area";
-  liveMapFrame.src = `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15&output=embed`;
+  mapPreviewText.textContent =
+    points.length > 0
+      ? `Showing ${points.length} locations around ${location.label || "this area"}`
+      : location.label
+        ? `Centered on ${location.label}`
+        : "Current search area";
+  renderLiveMap(location, points);
+}
+
+function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) {
+  const points = [];
+  if (options.showBus) {
+    stopsWithArrivals.forEach(({ stop }) => {
+      if (Number.isFinite(stop?.lat) && Number.isFinite(stop?.lon)) {
+        points.push({
+          type: "bus",
+          lat: stop.lat,
+          lon: stop.lon,
+          label: cleanStationName(stop.commonName || "Bus stop"),
+          href: getMapUrl(stop),
+        });
+      }
+    });
+  }
+
+  if (options.showTrain) {
+    stationsWithDepartures.forEach(({ stop }) => {
+      if (Number.isFinite(stop?.lat) && Number.isFinite(stop?.lon)) {
+        points.push({
+          type: "train",
+          lat: stop.lat,
+          lon: stop.lon,
+          label: cleanStationName(stop.commonName || "Train station"),
+          href: getMapUrl(stop),
+        });
+      }
+    });
+  }
+
+  return points;
+}
+
+function renderLiveMap(location, points) {
+  liveMapCanvas.innerHTML = "";
+  liveMapLegend.innerHTML = "";
+
+  const allPoints = [
+    {
+      type: "current",
+      lat: Number(location.lat),
+      lon: Number(location.lon),
+      label: location.label || "Search area",
+      href: getMapUrl(location),
+    },
+    ...points,
+  ];
+
+  const bounds = getMapBounds(allPoints);
+  allPoints.forEach((point) => {
+    const marker = document.createElement("a");
+    marker.className = `map-marker ${point.type}`;
+    marker.href = point.href;
+    marker.target = "_blank";
+    marker.rel = "noopener noreferrer";
+    marker.title = `Open ${point.label} in Google Maps`;
+    marker.setAttribute("aria-label", `Open ${point.label} in Google Maps`);
+    marker.dataset.label = point.label;
+    marker.style.left = `${projectMapX(point.lon, bounds)}%`;
+    marker.style.top = `${projectMapY(point.lat, bounds)}%`;
+    liveMapCanvas.append(marker);
+  });
+
+  renderMapLegend(points);
+}
+
+function renderMapLegend(points) {
+  const pointTypes = new Set(points.map((point) => point.type));
+  const legendItems = [{ type: "current", label: "Search area" }];
+  if (pointTypes.has("bus")) legendItems.push({ type: "bus", label: "Bus stops" });
+  if (pointTypes.has("train")) legendItems.push({ type: "train", label: "Train stations" });
+
+  liveMapLegend.innerHTML = legendItems
+    .map(
+      (item) => `
+        <span class="legend-pill">
+          <span class="legend-dot ${item.type}"></span>
+          ${escapeHtml(item.label)}
+        </span>
+      `,
+    )
+    .join("");
+}
+
+function getMapBounds(points) {
+  const lats = points.map((point) => point.lat);
+  const lons = points.map((point) => point.lon);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+  const latPadding = Math.max((maxLat - minLat) * 0.22, 0.0025);
+  const lonPadding = Math.max((maxLon - minLon) * 0.22, 0.0035);
+
+  return {
+    minLat: minLat - latPadding,
+    maxLat: maxLat + latPadding,
+    minLon: minLon - lonPadding,
+    maxLon: maxLon + lonPadding,
+  };
+}
+
+function projectMapX(lon, bounds) {
+  if (bounds.maxLon === bounds.minLon) return 50;
+  return ((lon - bounds.minLon) / (bounds.maxLon - bounds.minLon)) * 100;
+}
+
+function projectMapY(lat, bounds) {
+  if (bounds.maxLat === bounds.minLat) return 50;
+  return ((bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat)) * 100;
 }
 
 function startAutoRefresh() {
