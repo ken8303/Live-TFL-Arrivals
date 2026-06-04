@@ -96,7 +96,14 @@
       </div>
 
       <div id="selectPage" hidden>
-        <section class="select-controls" aria-label="Select bus stop controls">
+        <section class="select-controls bus-select-controls" aria-label="Select bus stop controls">
+          <form class="select-search-form" id="busStopSearchForm" aria-label="Search bus stops">
+            <label>
+              Search
+              <input id="busStopSearchInput" placeholder="Postcode, station, road, or place" autocomplete="off" />
+            </label>
+            <button class="secondary-button" type="submit">Search</button>
+          </form>
           <label>
             Area
             <select id="areaSelect"></select>

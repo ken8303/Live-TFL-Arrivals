@@ -215,6 +215,14 @@ svg {
   box-shadow: var(--shadow);
 }
 
+.select-search-form {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -591,6 +599,7 @@ select:focus {
 
   .controls,
   .manual-form,
+  .select-search-form,
   .select-controls {
     grid-template-columns: 1fr;
   }

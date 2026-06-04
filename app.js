@@ -60,6 +60,7 @@ const state = {
   pendingReload: false,
   selectedAreaStops: [],
   selectedStop: null,
+  selectedSearchQuery: null,
   selectedTrainStation: null,
   selectedTrainLine: null,
   savedStopId: null,
@@ -98,6 +99,8 @@ const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
 const areaSelect = document.querySelector("#areaSelect");
 const selectedStopSelect = document.querySelector("#selectedStopSelect");
+const busStopSearchForm = document.querySelector("#busStopSearchForm");
+const busStopSearchInput = document.querySelector("#busStopSearchInput");
 const trainStationSelect = document.querySelector("#trainStationSelect");
 const trainLineSelect = document.querySelector("#trainLineSelect");
 
@@ -128,6 +131,11 @@ liveNavButton.addEventListener("click", () => showPage("live"));
 selectNavButton.addEventListener("click", () => showPage("select"));
 selectTrainNavButton.addEventListener("click", () => showPage("train"));
 areaSelect.addEventListener("change", () => loadSelectedAreaStops());
+busStopSearchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const query = busStopSearchInput.value.trim();
+  if (query) loadSearchedBusStops(query);
+});
 selectedStopSelect.addEventListener("change", () => {
   const stop = state.selectedAreaStops.find((item) => getStopId(item) === selectedStopSelect.value);
   if (stop) loadSelectedStopArrivals(stop);
@@ -265,6 +273,8 @@ async function loadSelectedAreaStops(preferredStopId = state.savedStopId) {
 
   state.loading = true;
   state.selectedStop = null;
+  state.selectedSearchQuery = null;
+  busStopSearchInput.value = "";
   state.selectedAreaStops = [];
   selectedStopSelect.disabled = true;
   selectedStopSelect.innerHTML = `<option>Loading bus stops...</option>`;
@@ -309,6 +319,68 @@ async function loadSelectedAreaStops(preferredStopId = state.savedStopId) {
     selectedStopSelect.innerHTML = `<option>Could not load stops</option>`;
     selectedStopPanel.innerHTML = `<div class="empty-state">Bus stops could not be loaded. Please try again.</div>`;
     setStatus("Bus stops could not be loaded. Please try again.", "error");
+  } finally {
+    state.loading = false;
+    scheduleNextRefresh();
+  }
+}
+
+async function loadSearchedBusStops(query, preferredStopId = state.savedStopId) {
+  if (state.loading) {
+    state.selectedSearchQuery = query;
+    state.savedStopId = preferredStopId;
+    state.pendingReload = true;
+    return;
+  }
+
+  state.loading = true;
+  state.selectedStop = null;
+  state.selectedSearchQuery = query;
+  state.selectedAreaStops = [];
+  busStopSearchInput.value = query;
+  selectedStopSelect.disabled = true;
+  selectedStopSelect.innerHTML = `<option>Searching bus stops...</option>`;
+  selectedStopTitle.textContent = "Search bus stops";
+  selectedStopPanel.innerHTML = `<div class="empty-state">Searching bus stops for ${escapeHtml(query)}...</div>`;
+  setStatus(`Searching bus stops for ${query}...`, "waiting");
+  lastUpdated.textContent = "";
+  updateBookmarkUrl();
+
+  try {
+    const stops = await searchBusStops(query);
+    state.selectedAreaStops = stops;
+
+    if (!stops.length) {
+      selectedStopSelect.innerHTML = `<option>No bus stops found</option>`;
+      selectedStopPanel.innerHTML = `<div class="empty-state">No bus stops matched this search.</div>`;
+      setStatus(`No bus stops matched ${query}.`, "error");
+      return;
+    }
+
+    selectedStopSelect.innerHTML = stops
+      .map((stop) => `<option value="${escapeHtml(getStopId(stop))}">${escapeHtml(formatStopOption(stop))}</option>`)
+      .join("");
+    selectedStopSelect.disabled = false;
+    const preferredStop = preferredStopId ? stops.find((stop) => getStopId(stop) === preferredStopId) : null;
+    const firstResult = preferredStop
+      ? { stop: preferredStop, arrivals: await getArrivals(getStopId(preferredStop), "bus", SELECTED_STOP_ARRIVALS) }
+      : await findFirstStopWithArrivals(stops);
+    state.selectedStop = firstResult.stop;
+    state.savedStopId = null;
+    selectedStopSelect.value = getStopId(firstResult.stop);
+    selectedStopTitle.textContent = cleanStationName(firstResult.stop.commonName || "Selected bus stop");
+    renderSelectedStop(firstResult.stop, firstResult.arrivals);
+    setSelectedStopStatus(firstResult.stop, firstResult.arrivals.length);
+    updateBookmarkUrl();
+    lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  } catch (error) {
+    console.error(error);
+    selectedStopSelect.innerHTML = `<option>Search failed</option>`;
+    selectedStopPanel.innerHTML = `<div class="empty-state">Search could not be loaded. Please try again.</div>`;
+    setStatus("Bus stop search could not be loaded. Please try again.", "error");
   } finally {
     state.loading = false;
     scheduleNextRefresh();
@@ -466,6 +538,54 @@ async function findBusStopsForArea(location) {
     targetCount: 12,
     candidateCount: SELECTED_STOP_CANDIDATES,
   });
+}
+
+async function searchBusStops(query) {
+  const postcodeLocation = await lookupPostcode(query);
+  if (postcodeLocation) return findBusStopsForArea(postcodeLocation);
+
+  const url = new URL(`${API_BASE}/StopPoint/Search/${encodeURIComponent(query)}`);
+  url.searchParams.set("modes", "bus");
+  const data = await fetchJson(url);
+
+  return (data.matches || [])
+    .filter((match) => (match.modes || []).includes("bus") && match.id && !match.id.startsWith("HUB"))
+    .map((match) => ({
+      id: match.id,
+      naptanId: match.id,
+      commonName: match.name,
+      stopLetter: match.stopLetter || match.indicator || "",
+      indicator: match.towards ? `to ${match.towards}` : match.indicator,
+      distance: null,
+      additionalProperties: match.towards
+        ? [
+            {
+              key: "Towards",
+              value: match.towards,
+            },
+          ]
+        : [],
+      lat: match.lat,
+      lon: match.lon,
+      lines: [],
+    }))
+    .slice(0, SELECTED_STOP_CANDIDATES);
+}
+
+async function lookupPostcode(query) {
+  if (!/[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}/i.test(query)) return null;
+
+  const response = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(query)}`);
+  if (!response.ok) return null;
+  const data = await response.json();
+  const result = data.result;
+  if (!result || !Number.isFinite(result.latitude) || !Number.isFinite(result.longitude)) return null;
+
+  return {
+    label: result.postcode,
+    lat: result.latitude,
+    lon: result.longitude,
+  };
 }
 
 async function findFirstStopWithArrivals(stops) {
@@ -721,6 +841,10 @@ function refreshActivePage() {
       loadSelectedStopArrivals(state.selectedStop);
       return true;
     }
+    if (state.selectedSearchQuery) {
+      loadSearchedBusStops(state.selectedSearchQuery);
+      return true;
+    }
     loadSelectedAreaStops();
     return true;
   }
@@ -774,6 +898,10 @@ function restoreFromUrl() {
     const areaIndex = Number.parseInt(params.get("area"), 10);
     if (Number.isInteger(areaIndex) && AREAS[areaIndex]) areaSelect.value = String(areaIndex);
     state.savedStopId = params.get("stop");
+    if (params.get("q")) {
+      loadSearchedBusStops(params.get("q"), state.savedStopId);
+      return;
+    }
     loadSelectedAreaStops(state.savedStopId);
     return;
   }
@@ -814,7 +942,11 @@ function updateBookmarkUrl() {
   }
 
   if (state.activePage === "select") {
-    params.set("area", areaSelect.value || "0");
+    if (state.selectedSearchQuery) {
+      params.set("q", state.selectedSearchQuery);
+    } else {
+      params.set("area", areaSelect.value || "0");
+    }
     if (state.selectedStop) params.set("stop", getStopId(state.selectedStop));
   }
 
