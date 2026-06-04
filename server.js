@@ -6,7 +6,7 @@ const ROOT = __dirname;
 const PORT = Number(process.env.PORT) || 8000;
 const HOST = process.env.HOST || "127.0.0.1";
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
-const DARWIN_ARRIVAL_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetArrivalBoard";
+const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2017-10-01/ldb/GetDepartureBoard";
 const PUBLIC_FILES = new Set(["/", "/index.html", "/styles.css", "/app.js"]);
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -110,9 +110,10 @@ async function handleNationalRailArrivals(url, response) {
     return;
   }
 
-  const xml = await requestArrivalBoard(crs, rows, token);
+  const xml = await requestDepartureBoard(crs, rows, token);
   sendJson(response, 200, {
     source: "National Rail Darwin",
+    board: "departures",
     crs,
     arrivals: parseDarwinServices(xml, rows),
   });
@@ -126,12 +127,7 @@ async function getNationalRailToken() {
   return getConfiguredToken();
 }
 
-function getPortalTokenExpiry(token) {
-  const expires = Number(String(token).split(":")[1]);
-  return Number.isFinite(expires) ? expires : Date.now() + 10 * 60_000;
-}
-
-async function requestArrivalBoard(crs, rows, token) {
+async function requestDepartureBoard(crs, rows, token) {
   const envelope = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:typ="http://thalesgroup.com/RTTI/2013-11-28/Token/types" xmlns:ldb="http://thalesgroup.com/RTTI/2017-10-01/ldb/">
   <soap:Header>
@@ -140,10 +136,10 @@ async function requestArrivalBoard(crs, rows, token) {
     </typ:AccessToken>
   </soap:Header>
   <soap:Body>
-    <ldb:GetArrivalBoardRequest>
+    <ldb:GetDepartureBoardRequest>
       <ldb:numRows>${rows}</ldb:numRows>
       <ldb:crs>${escapeXml(crs)}</ldb:crs>
-    </ldb:GetArrivalBoardRequest>
+    </ldb:GetDepartureBoardRequest>
   </soap:Body>
 </soap:Envelope>`;
 
@@ -151,7 +147,7 @@ async function requestArrivalBoard(crs, rows, token) {
     method: "POST",
     headers: {
       "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: DARWIN_ARRIVAL_SOAP_ACTION,
+      SOAPAction: DARWIN_DEPARTURE_SOAP_ACTION,
     },
     body: envelope,
   });
@@ -175,8 +171,8 @@ function getDarwinFault(xml) {
 function parseDarwinServices(xml, rows) {
   const serviceBlocks = xml.match(/<[^<>:]*:?service\b[\s\S]*?<\/[^<>:]*:?service>/g) || [];
   return serviceBlocks.slice(0, rows).map((service) => {
-    const expected = getTagText(service, "eta") || getTagText(service, "sta") || getTagText(service, "etd") || getTagText(service, "std");
-    const scheduled = getTagText(service, "sta") || getTagText(service, "std");
+    const expected = getTagText(service, "etd") || getTagText(service, "std");
+    const scheduled = getTagText(service, "std");
     const destinationName = getDestinationName(service);
 
     return {

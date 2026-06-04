@@ -1,5 +1,5 @@
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
-const DARWIN_ARRIVAL_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetArrivalBoard";
+const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2017-10-01/ldb/GetDepartureBoard";
 
 export async function onRequestGet(context) {
   try {
@@ -32,9 +32,10 @@ export async function onRequestGet(context) {
       );
     }
 
-    const xml = await requestArrivalBoard(crs, rows, token);
+    const xml = await requestDepartureBoard(crs, rows, token);
     return json({
       source: "National Rail Darwin",
+      board: "departures",
       crs,
       arrivals: parseDarwinServices(xml, rows),
     });
@@ -54,7 +55,7 @@ async function getNationalRailToken(env) {
   return env.NATIONAL_RAIL_DARWIN_TOKEN || env.NATIONAL_RAIL_TOKEN || "";
 }
 
-async function requestArrivalBoard(crs, rows, token) {
+async function requestDepartureBoard(crs, rows, token) {
   const envelope = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:typ="http://thalesgroup.com/RTTI/2013-11-28/Token/types" xmlns:ldb="http://thalesgroup.com/RTTI/2017-10-01/ldb/">
   <soap:Header>
@@ -63,10 +64,10 @@ async function requestArrivalBoard(crs, rows, token) {
     </typ:AccessToken>
   </soap:Header>
   <soap:Body>
-    <ldb:GetArrivalBoardRequest>
+    <ldb:GetDepartureBoardRequest>
       <ldb:numRows>${rows}</ldb:numRows>
       <ldb:crs>${escapeXml(crs)}</ldb:crs>
-    </ldb:GetArrivalBoardRequest>
+    </ldb:GetDepartureBoardRequest>
   </soap:Body>
 </soap:Envelope>`;
 
@@ -74,7 +75,7 @@ async function requestArrivalBoard(crs, rows, token) {
     method: "POST",
     headers: {
       "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: DARWIN_ARRIVAL_SOAP_ACTION,
+      SOAPAction: DARWIN_DEPARTURE_SOAP_ACTION,
     },
     body: envelope,
   });
@@ -96,8 +97,8 @@ function getDarwinFault(xml) {
 function parseDarwinServices(xml, rows) {
   const serviceBlocks = xml.match(/<[^<>:]*:?service\b[\s\S]*?<\/[^<>:]*:?service>/g) || [];
   return serviceBlocks.slice(0, rows).map((service) => {
-    const expected = getTagText(service, "eta") || getTagText(service, "sta") || getTagText(service, "etd") || getTagText(service, "std");
-    const scheduled = getTagText(service, "sta") || getTagText(service, "std");
+    const expected = getTagText(service, "etd") || getTagText(service, "std");
+    const scheduled = getTagText(service, "std");
     const platform = getTagText(service, "platform");
 
     return {

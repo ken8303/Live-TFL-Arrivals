@@ -10,6 +10,7 @@ const AUTO_REFRESH_SECONDS = 30;
 const SELECTED_STOP_ARRIVALS = 5;
 const SELECTED_STOP_CANDIDATES = 30;
 const SELECTED_TRAIN_ARRIVALS = 5;
+const NATIONAL_RAIL_RESULTS = 10;
 const AREAS = [
   { label: "Central London", lat: 51.5074, lon: -0.1278 },
   { label: "King's Cross", lat: 51.5308, lon: -0.1238 },
@@ -109,6 +110,7 @@ const selectedStopPanel = document.querySelector("#selectedStopPanel");
 const selectedStopTitle = document.querySelector("#selectedStopTitle");
 const selectedTrainPanel = document.querySelector("#selectedTrainPanel");
 const selectedTrainTitle = document.querySelector("#selectedTrainTitle");
+const selectedTrainSubtitle = document.querySelector("#selectedTrainSubtitle");
 const lineStatusPanel = document.querySelector("#lineStatusPanel");
 const stopTemplate = document.querySelector("#stopTemplate");
 const statusText = document.querySelector("#statusText");
@@ -468,6 +470,7 @@ async function loadSelectedTrainStation(preferredLine = state.savedTrainLine) {
   trainLineSelect.disabled = true;
   trainLineSelect.innerHTML = `<option>Loading train lines...</option>`;
   selectedTrainTitle.textContent = station.name;
+  selectedTrainSubtitle.textContent = "Next 5 arrivals";
   lineStatusPanel.innerHTML = "";
   selectedTrainPanel.innerHTML = `<div class="empty-state">Loading train lines for ${escapeHtml(station.name)}...</div>`;
   setStatus(`Loading train lines for ${station.name}...`, "waiting");
@@ -518,18 +521,21 @@ async function loadSelectedTrainLine(station, lineId) {
   updateBookmarkUrl();
   trainLineSelect.value = lineId;
   selectedTrainTitle.textContent = station.name;
+  selectedTrainSubtitle.textContent =
+    lineId === "national-rail" && station.crs ? `Next ${NATIONAL_RAIL_RESULTS} departures` : `Next ${SELECTED_TRAIN_ARRIVALS} arrivals`;
   lineStatusPanel.innerHTML = `<div class="line-status loading">Loading line status...</div>`;
   selectedTrainPanel.innerHTML = "";
   renderSkeletons(selectedTrainPanel, 1);
-  setStatus(`Loading ${formatLineName(lineId)} arrivals at ${station.name}...`, "waiting");
+  setStatus(`Loading ${formatTrainBoardName(lineId)} at ${station.name}...`, "waiting");
   lastUpdated.textContent = "";
 
   try {
     const [allArrivals, lineStatus] = await Promise.all([getTrainArrivalsForLine(station, lineId), getLineStatus(lineId)]);
+    const limit = getTrainResultLimit(lineId, station);
     const arrivals =
       lineId === "national-rail" && station.crs
-        ? allArrivals.slice(0, SELECTED_TRAIN_ARRIVALS)
-        : filterArrivalsByLine(allArrivals, lineId).slice(0, SELECTED_TRAIN_ARRIVALS);
+        ? allArrivals.slice(0, limit)
+        : filterArrivalsByLine(allArrivals, lineId).slice(0, limit);
     renderLineStatus(lineStatus, lineId);
     renderSelectedTrainStation(station, arrivals, lineId);
     setTrainStationStatus(station, lineId, arrivals.length, lineStatus);
@@ -691,7 +697,7 @@ async function getStationTrainArrivals(stationId) {
 
 async function getTrainArrivalsForLine(station, lineId) {
   if (lineId === "national-rail" && station.crs) {
-    return getNationalRailArrivals(station.crs, SELECTED_TRAIN_ARRIVALS);
+    return getNationalRailArrivals(station.crs, NATIONAL_RAIL_RESULTS);
   }
 
   return getStationTrainArrivals(station.id);
@@ -762,6 +768,7 @@ function renderSelectedTrainStation(station, arrivals, lineId) {
       },
       arrivals,
       type: "train",
+      boardStation: station,
     }),
   );
 }
@@ -782,7 +789,7 @@ function renderLineStatus(lineStatus, lineId) {
   `;
 }
 
-function renderCard({ stop, arrivals, type, origin = null }) {
+function renderCard({ stop, arrivals, type, origin = null, boardStation = null }) {
   const node = stopTemplate.content.firstElementChild.cloneNode(true);
   const title = node.querySelector("h2");
   const meta = node.querySelector(".stop-meta");
@@ -807,8 +814,8 @@ function renderCard({ stop, arrivals, type, origin = null }) {
       item.innerHTML = `
         <span class="route">${escapeHtml(arrival.lineName || arrival.lineId || (isTrain ? "Train" : "Bus"))}</span>
         <span class="destination">
-          <strong>${escapeHtml(cleanStationName(arrival.destinationName || "Destination unavailable"))}</strong>
-          <span>${escapeHtml(formatExpectedTime(arrival.expectedArrival))}${formatPlatform(arrival.platformName)}</span>
+          <strong>${escapeHtml(formatDestinationText(arrival, boardStation))}</strong>
+          <span>${escapeHtml(formatJourneyDetail(arrival, boardStation))}</span>
         </span>
         <span class="eta">${formatEta(arrival.timeToStation)}</span>
       `;
@@ -1045,10 +1052,11 @@ function setSelectedStopStatus(stop, arrivalCount) {
 
 function setTrainStationStatus(station, lineId, arrivalCount, lineStatus) {
   const lineName = lineStatus?.name || formatLineName(lineId);
+  const boardType = lineId === "national-rail" && station.crs ? "departures" : "arrivals";
   if (arrivalCount > 0) {
-    setStatus(`Showing next ${arrivalCount} ${lineName} arrivals at ${station.name}.`, "ready");
+    setStatus(`Showing next ${arrivalCount} ${lineName} ${boardType} at ${station.name}.`, "ready");
   } else {
-    setStatus(`No live ${lineName} arrivals at ${station.name} right now.`, "waiting");
+    setStatus(`No live ${lineName} ${boardType} at ${station.name} right now.`, "waiting");
   }
 }
 
@@ -1084,6 +1092,14 @@ function formatLineName(lineId) {
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatTrainBoardName(lineId) {
+  return lineId === "national-rail" ? "National Rail departures" : `${formatLineName(lineId)} arrivals`;
+}
+
+function getTrainResultLimit(lineId, station) {
+  return lineId === "national-rail" && station.crs ? NATIONAL_RAIL_RESULTS : SELECTED_TRAIN_ARRIVALS;
 }
 
 function getDisplayOptions() {
@@ -1212,7 +1228,21 @@ function getLineSummary(stop) {
 }
 
 function formatPlatform(platformName) {
-  return platformName ? `, ${escapeHtml(platformName)}` : "";
+  return platformName ? `, ${platformName}` : "";
+}
+
+function formatDestinationText(arrival, boardStation) {
+  const destination = cleanStationName(arrival.destinationName || "Destination unavailable");
+  return arrival.modeName === "national-rail" && boardStation ? `To ${destination}` : destination;
+}
+
+function formatJourneyDetail(arrival, boardStation) {
+  const time = formatExpectedTime(arrival.expectedArrival);
+  const platform = formatPlatform(arrival.platformName);
+  if (arrival.modeName === "national-rail" && boardStation) {
+    return `Leaves ${boardStation.name} at ${time}${platform}`;
+  }
+  return `${time}${platform}`;
 }
 
 function getMapUrl(stop) {
