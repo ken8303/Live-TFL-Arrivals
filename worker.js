@@ -1,18 +1,39 @@
 import { onRequestGet as getNationalRailArrivals } from "./functions/api/national-rail/arrivals.js";
 import { onRequestGet as getNationalRailConfig } from "./functions/api/national-rail/config.js";
 
+const APP_VERSION = "2026-06-04-3dacc5f";
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/national-rail/arrivals") {
-      return getNationalRailArrivals({ request, env });
+      return withVersionHeader(await getNationalRailArrivals({ request, env }));
     }
 
     if (url.pathname === "/api/national-rail/config") {
-      return getNationalRailConfig({ request, env });
+      return withVersionHeader(await getNationalRailConfig({ request, env }));
     }
 
-    return env.ASSETS.fetch(request);
+    if (url.pathname === "/api/version") {
+      return withVersionHeader(
+        Response.json({
+          appVersion: APP_VERSION,
+          workerName: "live-tfl-arrivals",
+        }),
+      );
+    }
+
+    return withVersionHeader(await env.ASSETS.fetch(request));
   },
 };
+
+function withVersionHeader(response) {
+  const headers = new Headers(response.headers);
+  headers.set("x-app-version", APP_VERSION);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
