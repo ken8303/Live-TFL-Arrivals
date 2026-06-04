@@ -1,5 +1,4 @@
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
-const DATA_PORTAL_AUTH_URL = "https://opendata.nationalrail.co.uk/authenticate";
 
 export async function onRequestGet(context) {
   try {
@@ -15,10 +14,20 @@ export async function onRequestGet(context) {
     if (!token) {
       return json(
         {
-          error: "National Rail credentials are not configured in Cloudflare.",
-          help: "Add NATIONAL_RAIL_DARWIN_TOKEN, or NATIONAL_RAIL_USERNAME and NATIONAL_RAIL_PASSWORD, in Cloudflare Pages settings.",
+          error: "National Rail live board token is not configured in Cloudflare.",
+          help: "Add NATIONAL_RAIL_DARWIN_TOKEN. Username/password Data Portal credentials cannot be used for this live arrivals endpoint.",
         },
         501,
+      );
+    }
+
+    if (!isDarwinToken(token)) {
+      return json(
+        {
+          error: "National Rail live board token format looks invalid.",
+          help: "NATIONAL_RAIL_DARWIN_TOKEN should be the OpenLDBWS token, usually in nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn format.",
+        },
+        401,
       );
     }
 
@@ -30,27 +39,18 @@ export async function onRequestGet(context) {
     });
   } catch (error) {
     console.error(error);
-    return json({ error: "National Rail arrivals could not be loaded." }, 502);
+    return json(
+      {
+        error: "National Rail arrivals could not be loaded.",
+        help: error.message || "Check the NATIONAL_RAIL_DARWIN_TOKEN value in Cloudflare Variables and Secrets.",
+      },
+      502,
+    );
   }
 }
 
 async function getNationalRailToken(env) {
-  const configuredToken = env.NATIONAL_RAIL_DARWIN_TOKEN || env.NATIONAL_RAIL_TOKEN || "";
-  if (configuredToken) return configuredToken;
-
-  if (!env.NATIONAL_RAIL_USERNAME || !env.NATIONAL_RAIL_PASSWORD) return "";
-
-  const body = new URLSearchParams({
-    username: env.NATIONAL_RAIL_USERNAME,
-    password: env.NATIONAL_RAIL_PASSWORD,
-  });
-  const response = await fetch(DATA_PORTAL_AUTH_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const data = await response.json();
-  return response.ok ? data.token || "" : "";
+  return env.NATIONAL_RAIL_DARWIN_TOKEN || env.NATIONAL_RAIL_TOKEN || "";
 }
 
 async function requestArrivalBoard(crs, rows, token) {
@@ -78,8 +78,18 @@ async function requestArrivalBoard(crs, rows, token) {
     body: envelope,
   });
   const text = await response.text();
-  if (!response.ok || text.includes("<soap:Fault>")) throw new Error("National Rail request failed");
+  if (!response.ok || text.includes("<soap:Fault>")) {
+    throw new Error(getDarwinFault(text) || `National Rail request failed with status ${response.status}`);
+  }
   return text;
+}
+
+function isDarwinToken(token) {
+  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(String(token).trim());
+}
+
+function getDarwinFault(xml) {
+  return getTagText(xml, "faultstring") || getTagText(xml, "Text") || "";
 }
 
 function parseDarwinServices(xml, rows) {

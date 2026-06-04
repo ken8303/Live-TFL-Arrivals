@@ -6,15 +6,12 @@ const ROOT = __dirname;
 const PORT = Number(process.env.PORT) || 8000;
 const HOST = process.env.HOST || "127.0.0.1";
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
-const DATA_PORTAL_AUTH_URL = "https://opendata.nationalrail.co.uk/authenticate";
 const PUBLIC_FILES = new Set(["/", "/index.html", "/styles.css", "/app.js"]);
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
 };
-
-let cachedPortalToken = null;
 
 loadEnv();
 
@@ -29,7 +26,8 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === "/api/national-rail/config") {
       sendJson(response, 200, {
-        configured: Boolean(getConfiguredToken() || (process.env.NATIONAL_RAIL_USERNAME && process.env.NATIONAL_RAIL_PASSWORD)),
+        configured: Boolean(getConfiguredToken()),
+        portalCredentialsConfigured: Boolean(process.env.NATIONAL_RAIL_USERNAME && process.env.NATIONAL_RAIL_PASSWORD),
       });
       return;
     }
@@ -97,8 +95,16 @@ async function handleNationalRailArrivals(url, response) {
   const token = await getNationalRailToken();
   if (!token) {
     sendJson(response, 501, {
-      error: "National Rail credentials are not configured on the server.",
-      help: "Copy .env.example to .env, add your token or username/password, then restart the server.",
+      error: "National Rail live board token is not configured on the server.",
+      help: "Add NATIONAL_RAIL_DARWIN_TOKEN. Username/password Data Portal credentials cannot be used for this live arrivals endpoint.",
+    });
+    return;
+  }
+
+  if (!isDarwinToken(token)) {
+    sendJson(response, 401, {
+      error: "National Rail live board token format looks invalid.",
+      help: "NATIONAL_RAIL_DARWIN_TOKEN should be the OpenLDBWS token, usually in nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn format.",
     });
     return;
   }
@@ -116,31 +122,7 @@ function getConfiguredToken() {
 }
 
 async function getNationalRailToken() {
-  const configuredToken = getConfiguredToken();
-  if (configuredToken) return configuredToken;
-
-  const username = process.env.NATIONAL_RAIL_USERNAME;
-  const password = process.env.NATIONAL_RAIL_PASSWORD;
-  if (!username || !password) return "";
-
-  if (cachedPortalToken && cachedPortalToken.expiresAt > Date.now() + 60_000) {
-    return cachedPortalToken.value;
-  }
-
-  const body = new URLSearchParams({ username, password });
-  const authResponse = await fetch(DATA_PORTAL_AUTH_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const data = await authResponse.json();
-  if (!authResponse.ok || !data.token) return "";
-
-  cachedPortalToken = {
-    value: data.token,
-    expiresAt: getPortalTokenExpiry(data.token),
-  };
-  return cachedPortalToken.value;
+  return getConfiguredToken();
 }
 
 function getPortalTokenExpiry(token) {
@@ -175,10 +157,18 @@ async function requestArrivalBoard(crs, rows, token) {
 
   const text = await nationalRailResponse.text();
   if (!nationalRailResponse.ok || text.includes("<soap:Fault>")) {
-    throw new Error("National Rail request failed");
+    throw new Error(getDarwinFault(text) || `National Rail request failed with status ${nationalRailResponse.status}`);
   }
 
   return text;
+}
+
+function isDarwinToken(token) {
+  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(String(token).trim());
+}
+
+function getDarwinFault(xml) {
+  return getTagText(xml, "faultstring") || getTagText(xml, "Text") || "";
 }
 
 function parseDarwinServices(xml, rows) {

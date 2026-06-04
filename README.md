@@ -56,13 +56,21 @@ In Cloudflare, open your project and add the same secret values under:
 Settings > Variables and Secrets
 ```
 
-Add either:
+For live arrivals, add:
 
 ```text
 NATIONAL_RAIL_DARWIN_TOKEN
 ```
 
-or:
+This must be the OpenLDBWS / Darwin live departure board token, usually shaped like:
+
+```text
+nnnnnnnn-nnnn-nnnn-nnnn-nnnnnnnnnnnn
+```
+
+National Rail Data Portal username/password credentials are not enough for the live arrivals board. They are for Data Portal feeds, not the OpenLDBWS SOAP live board endpoint.
+
+Keep these only if you later add Data Portal feed features:
 
 ```text
 NATIONAL_RAIL_USERNAME
