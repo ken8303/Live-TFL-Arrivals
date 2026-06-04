@@ -1135,13 +1135,12 @@ function updateLiveMap(location, points = []) {
   const lat = Number(location?.lat);
   const lon = Number(location?.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    liveMapPreview.hidden = true;
     liveMapCanvas.innerHTML = "";
     liveMapLegend.innerHTML = "";
+    mapPreviewText.textContent = "Choose a location to preview nearby stops and stations";
     return;
   }
 
-  liveMapPreview.hidden = false;
   mapPreviewText.textContent =
     points.length > 0
       ? `Showing ${points.length} locations around ${location.label || "this area"}`
@@ -1155,11 +1154,13 @@ function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) 
   const points = [];
   if (options.showBus) {
     stopsWithArrivals.forEach(({ stop }) => {
-      if (Number.isFinite(stop?.lat) && Number.isFinite(stop?.lon)) {
+      const lat = Number(stop?.lat);
+      const lon = Number(stop?.lon);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
         points.push({
           type: "bus",
-          lat: stop.lat,
-          lon: stop.lon,
+          lat,
+          lon,
           label: cleanStationName(stop.commonName || "Bus stop"),
           href: getMapUrl(stop),
         });
@@ -1169,11 +1170,13 @@ function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) 
 
   if (options.showTrain) {
     stationsWithDepartures.forEach(({ stop }) => {
-      if (Number.isFinite(stop?.lat) && Number.isFinite(stop?.lon)) {
+      const lat = Number(stop?.lat);
+      const lon = Number(stop?.lon);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
         points.push({
           type: "train",
-          lat: stop.lat,
-          lon: stop.lon,
+          lat,
+          lon,
           label: cleanStationName(stop.commonName || "Train station"),
           href: getMapUrl(stop),
         });
