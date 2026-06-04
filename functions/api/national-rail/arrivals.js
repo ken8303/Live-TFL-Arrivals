@@ -1,5 +1,5 @@
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
-const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetDepartureBoard";
+const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetDepBoardWithDetails";
 const LONDON_TIME_ZONE = "Europe/London";
 const londonDateFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: LONDON_TIME_ZONE,
@@ -48,12 +48,12 @@ export async function onRequestGet(context) {
       );
     }
 
-    const xml = await requestDepartureBoard(crs, rows, token);
+    const xml = await requestDepartureBoardWithDetails(crs, rows, token);
     return json({
       source: "National Rail Darwin",
       board: "departures",
       crs,
-      arrivals: parseDarwinServices(xml, rows),
+      arrivals: parseDarwinServices(xml, rows).filter((service) => !isElizabethLineService(service)),
     });
   } catch (error) {
     console.error(error);
@@ -71,7 +71,7 @@ async function getNationalRailToken(env) {
   return env.NATIONAL_RAIL_DARWIN_TOKEN || env.NATIONAL_RAIL_TOKEN || "";
 }
 
-async function requestDepartureBoard(crs, rows, token) {
+async function requestDepartureBoardWithDetails(crs, rows, token) {
   const envelope = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:typ="http://thalesgroup.com/RTTI/2013-11-28/Token/types" xmlns:ldb="http://thalesgroup.com/RTTI/2017-10-01/ldb/">
   <soap:Header>
@@ -80,10 +80,14 @@ async function requestDepartureBoard(crs, rows, token) {
     </typ:AccessToken>
   </soap:Header>
   <soap:Body>
-    <ldb:GetDepartureBoardRequest>
+    <ldb:GetDepBoardWithDetailsRequest>
       <ldb:numRows>${rows}</ldb:numRows>
       <ldb:crs>${escapeXml(crs)}</ldb:crs>
-    </ldb:GetDepartureBoardRequest>
+      <ldb:filterCrs></ldb:filterCrs>
+      <ldb:filterType>to</ldb:filterType>
+      <ldb:timeOffset>0</ldb:timeOffset>
+      <ldb:timeWindow>120</ldb:timeWindow>
+    </ldb:GetDepBoardWithDetailsRequest>
   </soap:Body>
 </soap:Envelope>`;
 
@@ -137,7 +141,8 @@ function getTagText(xml, tag) {
 
 function getDestinationName(service) {
   const destinationBlock = service.match(/<[^<>:]*:?destination\b[\s\S]*?<\/[^<>:]*:?destination>/i)?.[0] || "";
-  return getTagText(destinationBlock, "locationName") || "Destination unavailable";
+  const locationBlocks = destinationBlock.match(/<[^<>:]*:?location\b[\s\S]*?<\/[^<>:]*:?location>/gi) || [];
+  return getTagText(locationBlocks.at(-1) || destinationBlock, "locationName") || "Destination unavailable";
 }
 
 function getCallingPoints(service) {
@@ -145,6 +150,10 @@ function getCallingPoints(service) {
   return callingPointBlocks
     .map((block) => getTagText(block, "locationName"))
     .filter(Boolean);
+}
+
+function isElizabethLineService(service) {
+  return String(service.lineName || "").trim().toLowerCase() === "elizabeth line";
 }
 
 function getExpectedDate(expected, scheduled) {
