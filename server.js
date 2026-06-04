@@ -7,12 +7,28 @@ const PORT = Number(process.env.PORT) || 8000;
 const HOST = process.env.HOST || "127.0.0.1";
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
 const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetDepartureBoard";
+const LONDON_TIME_ZONE = "Europe/London";
 const PUBLIC_FILES = new Set(["/", "/index.html", "/styles.css", "/app.js"]);
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
 };
+const londonDateFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: LONDON_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const londonDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: LONDON_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
 
 loadEnv();
 
@@ -200,11 +216,16 @@ function getDestinationName(service) {
 function getExpectedDate(expected, scheduled) {
   const timeText = normaliseTime(expected, scheduled);
   if (!timeText) return null;
-  const [hours, minutes] = timeText.split(":").map(Number);
-  const date = new Date();
-  date.setHours(hours, minutes, 0, 0);
-  if (date.getTime() < Date.now() - 60 * 60_000) date.setDate(date.getDate() + 1);
-  return date.toISOString();
+  const now = new Date();
+  const today = getLondonDateParts(now);
+  const tomorrow = getLondonDateParts(new Date(now.getTime() + 24 * 60 * 60_000));
+  const todayIso = getLondonOccurrenceIso(today, timeText);
+
+  if (todayIso && new Date(todayIso).getTime() >= now.getTime() - 60 * 60_000) {
+    return todayIso;
+  }
+
+  return getLondonOccurrenceIso(tomorrow, timeText);
 }
 
 function getTimeToStation(expected, scheduled) {
@@ -218,6 +239,54 @@ function normaliseTime(expected, scheduled) {
   if (expected && expected.toLowerCase() === "on time" && /^\d{2}:\d{2}$/.test(scheduled)) return scheduled;
   if (/^\d{2}:\d{2}$/.test(scheduled)) return scheduled;
   return "";
+}
+
+function getLondonDateParts(date) {
+  const parts = londonDateFormatter.formatToParts(date);
+  return {
+    day: Number(parts.find((part) => part.type === "day")?.value),
+    month: Number(parts.find((part) => part.type === "month")?.value),
+    year: Number(parts.find((part) => part.type === "year")?.value),
+  };
+}
+
+function getLondonOccurrenceIso(dateParts, timeText) {
+  const [hours, minutes] = timeText.split(":").map(Number);
+  for (const offsetMinutes of [0, 60]) {
+    const candidateUtc = Date.UTC(
+      dateParts.year,
+      dateParts.month - 1,
+      dateParts.day,
+      hours - offsetMinutes / 60,
+      minutes,
+      0,
+      0,
+    );
+
+    if (matchesLondonDateTime(candidateUtc, dateParts, timeText)) {
+      return new Date(candidateUtc).toISOString();
+    }
+  }
+
+  return new Date(Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day, hours, minutes, 0, 0)).toISOString();
+}
+
+function matchesLondonDateTime(candidateUtc, dateParts, timeText) {
+  const parts = londonDateTimeFormatter.formatToParts(new Date(candidateUtc));
+  const candidate = {
+    day: Number(parts.find((part) => part.type === "day")?.value),
+    month: Number(parts.find((part) => part.type === "month")?.value),
+    year: Number(parts.find((part) => part.type === "year")?.value),
+    hour: parts.find((part) => part.type === "hour")?.value,
+    minute: parts.find((part) => part.type === "minute")?.value,
+  };
+
+  return (
+    candidate.year === dateParts.year &&
+    candidate.month === dateParts.month &&
+    candidate.day === dateParts.day &&
+    `${candidate.hour}:${candidate.minute}` === timeText
+  );
 }
 
 function escapeXml(value) {

@@ -55,10 +55,7 @@ const TRAIN_STATIONS = [
     crs: "PAD",
     lat: 51.51603,
     lon: -0.17619,
-    lines: [
-      { id: "elizabeth", name: "Elizabeth line" },
-      { id: "national-rail", name: "National Rail" },
-    ],
+    lines: [{ id: "national-rail", name: "National Rail" }],
   },
   {
     name: "Tottenham Court Road Elizabeth line",
@@ -73,10 +70,7 @@ const TRAIN_STATIONS = [
     crs: "SRA",
     lat: 51.541893,
     lon: -0.003379,
-    lines: [
-      { id: "elizabeth", name: "Elizabeth line" },
-      { id: "national-rail", name: "National Rail" },
-    ],
+    lines: [{ id: "elizabeth", name: "Elizabeth line" }],
   },
 ];
 
