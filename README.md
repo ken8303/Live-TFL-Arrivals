@@ -30,6 +30,17 @@ The server reads credentials from `.env`, calls National Rail from the backend, 
 
 Cloudflare Pages does not run `server.js`. The protected National Rail endpoint is also implemented as Pages Functions in `functions/api/national-rail/`.
 
+Use these Cloudflare build settings:
+
+```text
+Framework preset: None / Static
+Build command: leave empty
+Build output directory: /
+Deploy command: leave empty
+```
+
+Do not use `npx wrangler deploy` as the deploy command for this Pages project.
+
 In Cloudflare, open your Pages project and add the same secret values under:
 
 ```text
