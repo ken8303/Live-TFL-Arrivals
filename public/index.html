@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nearest Transit Times</title>
-    <link rel="stylesheet" href="styles.css?v=2026-06-04-mapfix2" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-04-googlemap" />
   </head>
   <body>
     <main class="app-shell">
@@ -83,7 +83,13 @@
             <h2>Map Preview</h2>
             <p id="mapPreviewText">Choose a location to preview nearby stops and stations</p>
           </div>
-          <div class="mini-map" id="liveMapCanvas" role="img" aria-label="Nearby buses and trains map"></div>
+          <iframe
+            class="mini-map"
+            id="liveMapFrame"
+            title="Nearby buses and trains map"
+            loading="lazy"
+            referrerpolicy="no-referrer-when-downgrade"
+          ></iframe>
           <div class="map-legend" id="liveMapLegend"></div>
         </section>
 
@@ -172,6 +178,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-04-mapfix2"></script>
+    <script src="app.js?v=2026-06-04-googlemap"></script>
   </body>
 </html>

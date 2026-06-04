@@ -123,7 +123,7 @@ const lonInput = document.querySelector("#lonInput");
 const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
 const liveMapPreview = document.querySelector("#liveMapPreview");
-const liveMapCanvas = document.querySelector("#liveMapCanvas");
+const liveMapFrame = document.querySelector("#liveMapFrame");
 const liveMapLegend = document.querySelector("#liveMapLegend");
 const mapPreviewText = document.querySelector("#mapPreviewText");
 const areaSelect = document.querySelector("#areaSelect");
@@ -1135,7 +1135,7 @@ function updateLiveMap(location, points = []) {
   const lat = Number(location?.lat);
   const lon = Number(location?.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    liveMapCanvas.innerHTML = "";
+    liveMapFrame.removeAttribute("src");
     liveMapLegend.innerHTML = "";
     mapPreviewText.textContent = "Choose a location to preview nearby stops and stations";
     return;
@@ -1188,82 +1188,49 @@ function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) 
 }
 
 function renderLiveMap(location, points) {
-  liveMapCanvas.innerHTML = "";
-  liveMapLegend.innerHTML = "";
+  liveMapFrame.src = buildGoogleMapEmbedUrl(location, points);
+  renderMapLegend(location, points);
+}
 
-  const allPoints = [
+function renderMapLegend(location, points) {
+  const legendItems = [
     {
       type: "current",
-      lat: Number(location.lat),
-      lon: Number(location.lon),
       label: location.label || "Search area",
       href: getMapUrl(location),
     },
     ...points,
   ];
 
-  const bounds = getMapBounds(allPoints);
-  allPoints.forEach((point) => {
-    const marker = document.createElement("a");
-    marker.className = `map-marker ${point.type}`;
-    marker.href = point.href;
-    marker.target = "_blank";
-    marker.rel = "noopener noreferrer";
-    marker.title = `Open ${point.label} in Google Maps`;
-    marker.setAttribute("aria-label", `Open ${point.label} in Google Maps`);
-    marker.dataset.label = point.label;
-    marker.style.left = `${projectMapX(point.lon, bounds)}%`;
-    marker.style.top = `${projectMapY(point.lat, bounds)}%`;
-    liveMapCanvas.append(marker);
-  });
-
-  renderMapLegend(points);
-}
-
-function renderMapLegend(points) {
-  const pointTypes = new Set(points.map((point) => point.type));
-  const legendItems = [{ type: "current", label: "Search area" }];
-  if (pointTypes.has("bus")) legendItems.push({ type: "bus", label: "Bus stops" });
-  if (pointTypes.has("train")) legendItems.push({ type: "train", label: "Train stations" });
-
   liveMapLegend.innerHTML = legendItems
     .map(
       (item) => `
-        <span class="legend-pill">
+        <a class="legend-pill" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">
           <span class="legend-dot ${item.type}"></span>
           ${escapeHtml(item.label)}
-        </span>
+        </a>
       `,
     )
     .join("");
 }
 
-function getMapBounds(points) {
-  const lats = points.map((point) => point.lat);
-  const lons = points.map((point) => point.lon);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons);
-  const maxLon = Math.max(...lons);
-  const latPadding = Math.max((maxLat - minLat) * 0.22, 0.0025);
-  const lonPadding = Math.max((maxLon - minLon) * 0.22, 0.0035);
+function buildGoogleMapEmbedUrl(location, points) {
+  const origin = `${Number(location.lat)},${Number(location.lon)}`;
+  const destinations = points
+    .map((point) => `${Number(point.lat)},${Number(point.lon)}`)
+    .filter((value, index, items) => Number.isFinite(Number.parseFloat(value)) && items.indexOf(value) === index);
 
-  return {
-    minLat: minLat - latPadding,
-    maxLat: maxLat + latPadding,
-    minLon: minLon - lonPadding,
-    maxLon: maxLon + lonPadding,
-  };
-}
+  if (!destinations.length) {
+    return `https://www.google.com/maps?output=embed&q=${encodeURIComponent(origin)}`;
+  }
 
-function projectMapX(lon, bounds) {
-  if (bounds.maxLon === bounds.minLon) return 50;
-  return ((lon - bounds.minLon) / (bounds.maxLon - bounds.minLon)) * 100;
-}
+  if (destinations.length === 1) {
+    return `https://www.google.com/maps?output=embed&saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(destinations[0])}`;
+  }
 
-function projectMapY(lat, bounds) {
-  if (bounds.maxLat === bounds.minLat) return 50;
-  return ((bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat)) * 100;
+  const [firstDestination, ...rest] = destinations;
+  const waypoints = rest.join("|");
+  return `https://www.google.com/maps?output=embed&saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(firstDestination)}&waypoints=${encodeURIComponent(waypoints)}`;
 }
 
 function startAutoRefresh() {

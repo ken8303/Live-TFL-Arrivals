@@ -332,107 +332,13 @@ select:focus {
 }
 
 .mini-map {
-  position: relative;
   width: 100%;
   min-height: 280px;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 20% 20%, rgba(0, 124, 137, 0.14), transparent 22%),
-    radial-gradient(circle at 80% 30%, rgba(0, 94, 184, 0.16), transparent 24%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(234, 243, 255, 0.95)),
-    #fff;
+  background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow);
-}
-
-.mini-map::before,
-.mini-map::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-}
-
-.mini-map::before {
-  background-image:
-    linear-gradient(rgba(21, 32, 43, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(21, 32, 43, 0.06) 1px, transparent 1px);
-  background-size: 60px 60px;
-}
-
-.mini-map::after {
-  background:
-    linear-gradient(90deg, transparent calc(50% - 1px), rgba(21, 32, 43, 0.08) calc(50% - 1px), rgba(21, 32, 43, 0.08) calc(50% + 1px), transparent calc(50% + 1px)),
-    linear-gradient(transparent calc(50% - 1px), rgba(21, 32, 43, 0.08) calc(50% - 1px), rgba(21, 32, 43, 0.08) calc(50% + 1px), transparent calc(50% + 1px));
-}
-
-.map-marker {
-  position: absolute;
-  z-index: 1;
-  display: inline-grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  color: #fff;
-  text-decoration: none;
-  border: 2px solid #fff;
-  border-radius: 999px;
-  box-shadow: 0 6px 18px rgba(21, 32, 43, 0.24);
-  transform: translate(-50%, -50%);
-}
-
-.map-marker::after {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 50%;
-  width: max-content;
-  max-width: 150px;
-  padding: 4px 8px;
-  color: var(--ink);
-  font-size: 0.74rem;
-  font-weight: 800;
-  white-space: nowrap;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(21, 32, 43, 0.08);
-  border-radius: 999px;
-  box-shadow: 0 10px 20px rgba(21, 32, 43, 0.12);
-  content: attr(data-label);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(-50%);
-  transition: opacity 160ms ease;
-}
-
-.map-marker:hover::after,
-.map-marker:focus-visible::after {
-  opacity: 1;
-}
-
-.map-marker:focus-visible {
-  outline: 2px solid rgba(0, 94, 184, 0.3);
-  outline-offset: 2px;
-}
-
-.map-marker.current {
-  width: 20px;
-  height: 20px;
-  background: var(--ink);
-}
-
-.map-marker.current::before {
-  position: absolute;
-  inset: -8px;
-  border: 1px solid rgba(21, 32, 43, 0.22);
-  border-radius: 999px;
-  content: "";
-}
-
-.map-marker.bus {
-  background: var(--red);
-}
-
-.map-marker.train {
-  background: var(--teal);
+  display: block;
 }
 
 .map-legend {
@@ -454,6 +360,7 @@ select:focus {
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 800;
+  text-decoration: none;
 }
 
 .legend-dot {
