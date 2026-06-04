@@ -6,6 +6,7 @@ const ROOT = __dirname;
 const PORT = Number(process.env.PORT) || 8000;
 const HOST = process.env.HOST || "127.0.0.1";
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
+const DARWIN_ARRIVAL_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetArrivalBoard";
 const PUBLIC_FILES = new Set(["/", "/index.html", "/styles.css", "/app.js"]);
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -150,7 +151,7 @@ async function requestArrivalBoard(crs, rows, token) {
     method: "POST",
     headers: {
       "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: "http://thalesgroup.com/RTTI/2017-10-01/ldb/GetArrivalBoard",
+      SOAPAction: DARWIN_ARRIVAL_SOAP_ACTION,
     },
     body: envelope,
   });
