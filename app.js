@@ -23,9 +23,30 @@ const AREAS = [
   { label: "Hammersmith", lat: 51.4927, lon: -0.2259 },
 ];
 const TRAIN_STATIONS = [
-  { name: "Charing Cross", id: "940GZZLUCHX", lat: 51.50741, lon: -0.127277 },
-  { name: "King's Cross St. Pancras", id: "940GZZLUKSX", lat: 51.530663, lon: -0.123194 },
-  { name: "Victoria", id: "940GZZLUVIC", lat: 51.496424, lon: -0.143921 },
+  {
+    name: "Charing Cross",
+    id: "940GZZLUCHX",
+    crs: "CHX",
+    lat: 51.50741,
+    lon: -0.127277,
+    lines: [{ id: "national-rail", name: "National Rail" }],
+  },
+  {
+    name: "King's Cross St. Pancras",
+    id: "940GZZLUKSX",
+    crs: "KGX",
+    lat: 51.530663,
+    lon: -0.123194,
+    lines: [{ id: "national-rail", name: "National Rail" }],
+  },
+  {
+    name: "Victoria",
+    id: "940GZZLUVIC",
+    crs: "VIC",
+    lat: 51.496424,
+    lon: -0.143921,
+    lines: [{ id: "national-rail", name: "National Rail" }],
+  },
   { name: "Paddington Underground", id: "940GZZLUPAC", lat: 51.515184, lon: -0.175539 },
   {
     name: "Paddington Rail",
@@ -48,9 +69,13 @@ const TRAIN_STATIONS = [
   {
     name: "Stratford Elizabeth line",
     id: "910GSTFD",
+    crs: "SRA",
     lat: 51.541893,
     lon: -0.003379,
-    lines: [{ id: "elizabeth", name: "Elizabeth line" }],
+    lines: [
+      { id: "elizabeth", name: "Elizabeth line" },
+      { id: "national-rail", name: "National Rail" },
+    ],
   },
 ];
 
@@ -516,8 +541,12 @@ async function loadSelectedTrainLine(station, lineId) {
   } catch (error) {
     console.error(error);
     lineStatusPanel.innerHTML = "";
-    selectedTrainPanel.innerHTML = `<div class="empty-state">Live train arrivals could not be loaded.</div>`;
-    setStatus("Live train arrivals could not be loaded.", "error");
+    const setupHint =
+      lineId === "national-rail"
+        ? " Check that your National Rail secret is set in Cloudflare Variables and Secrets."
+        : "";
+    selectedTrainPanel.innerHTML = `<div class="empty-state">Live train arrivals could not be loaded.${setupHint}</div>`;
+    setStatus(`Live train arrivals could not be loaded.${setupHint}`, "error");
   } finally {
     state.loading = false;
     if (state.pendingReload) {
@@ -694,7 +723,7 @@ async function fetchJson(url) {
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(`TfL request failed with status ${response.status}`);
+    throw new Error(`Request failed with status ${response.status}`);
   }
 
   return response.json();

@@ -93,7 +93,7 @@ function parseDarwinServices(xml, rows) {
       modeName: "national-rail",
       lineId: "national-rail",
       lineName: getTagText(service, "operator") || "National Rail",
-      destinationName: getTagText(service, "locationName") || "Destination unavailable",
+      destinationName: getDestinationName(service),
       platformName: platform ? `Platform ${platform}` : "",
       expectedArrival: getExpectedDate(expected, scheduled),
       timeToStation: getTimeToStation(expected, scheduled),
@@ -104,6 +104,11 @@ function parseDarwinServices(xml, rows) {
 function getTagText(xml, tag) {
   const match = xml.match(new RegExp(`<[^<>:]*:?${tag}[^>]*>([\\s\\S]*?)<\\/[^<>:]*:?${tag}>`, "i"));
   return match ? decodeXml(match[1].replace(/<[^>]+>/g, "").trim()) : "";
+}
+
+function getDestinationName(service) {
+  const destinationBlock = service.match(/<[^<>:]*:?destination\b[\s\S]*?<\/[^<>:]*:?destination>/i)?.[0] || "";
+  return getTagText(destinationBlock, "locationName") || "Destination unavailable";
 }
 
 function getExpectedDate(expected, scheduled) {

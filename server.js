@@ -186,7 +186,7 @@ function parseDarwinServices(xml, rows) {
   return serviceBlocks.slice(0, rows).map((service) => {
     const expected = getTagText(service, "eta") || getTagText(service, "sta") || getTagText(service, "etd") || getTagText(service, "std");
     const scheduled = getTagText(service, "sta") || getTagText(service, "std");
-    const destinationName = getTagText(service, "locationName") || getTagText(service, "destination") || "Destination unavailable";
+    const destinationName = getDestinationName(service);
 
     return {
       modeName: "national-rail",
@@ -203,6 +203,11 @@ function parseDarwinServices(xml, rows) {
 function getTagText(xml, tag) {
   const match = xml.match(new RegExp(`<[^<>:]*:?${tag}[^>]*>([\\s\\S]*?)<\\/[^<>:]*:?${tag}>`, "i"));
   return match ? decodeXml(match[1].replace(/<[^>]+>/g, "").trim()) : "";
+}
+
+function getDestinationName(service) {
+  const destinationBlock = service.match(/<[^<>:]*:?destination\b[\s\S]*?<\/[^<>:]*:?destination>/i)?.[0] || "";
+  return getTagText(destinationBlock, "locationName") || "Destination unavailable";
 }
 
 function getExpectedDate(expected, scheduled) {
