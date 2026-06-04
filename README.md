@@ -25,3 +25,28 @@ Do not open `index.html` directly when using National Rail data. A `file://` pag
 Never add National Rail credentials to `app.js`, `index.html`, or any other browser file. Browser files can be viewed by anyone using the site.
 
 The server reads credentials from `.env`, calls National Rail from the backend, and only sends safe arrival data back to the browser.
+
+## Cloudflare Pages
+
+Cloudflare Pages does not run `server.js`. The protected National Rail endpoint is also implemented as Pages Functions in `functions/api/national-rail/`.
+
+In Cloudflare, open your Pages project and add the same secret values under:
+
+```text
+Settings > Variables and Secrets
+```
+
+Add either:
+
+```text
+NATIONAL_RAIL_DARWIN_TOKEN
+```
+
+or:
+
+```text
+NATIONAL_RAIL_USERNAME
+NATIONAL_RAIL_PASSWORD
+```
+
+Then redeploy the Pages project from the latest GitHub commit.
