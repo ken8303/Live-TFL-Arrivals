@@ -147,7 +147,7 @@ svg {
 
 .controls {
   display: grid;
-  grid-template-columns: auto auto minmax(220px, 0.7fr) 1fr;
+  grid-template-columns: auto minmax(220px, 0.7fr) 1fr;
   gap: 12px;
   align-items: end;
   padding: 16px;
@@ -191,7 +191,7 @@ svg {
 
 .manual-form {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) auto;
+  grid-template-columns: minmax(260px, 1fr) auto;
   gap: 12px;
   align-items: end;
 }

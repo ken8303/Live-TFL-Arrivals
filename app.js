@@ -1,5 +1,4 @@
 const API_BASE = "https://api.tfl.gov.uk";
-const DEMO_LOCATION = { lat: 51.5074, lon: -0.1278, label: "central London" };
 const MAX_BUS_STOPS = 3;
 const MAX_STATIONS = 2;
 const MAX_ARRIVALS = 3;
@@ -115,11 +114,9 @@ const statusDot = document.querySelector("#statusDot");
 const lastUpdated = document.querySelector("#lastUpdated");
 const refreshCountdown = document.querySelector("#refreshCountdown");
 const locateButton = document.querySelector("#locateButton");
-const demoButton = document.querySelector("#demoButton");
 const refreshButton = document.querySelector("#refreshButton");
 const manualForm = document.querySelector("#manualForm");
-const latInput = document.querySelector("#latInput");
-const lonInput = document.querySelector("#lonInput");
+const locationInput = document.querySelector("#locationInput");
 const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
 const liveMapPreview = document.querySelector("#liveMapPreview");
@@ -134,7 +131,6 @@ const trainStationSelect = document.querySelector("#trainStationSelect");
 const trainLineSelect = document.querySelector("#trainLineSelect");
 
 locateButton.addEventListener("click", locateUser);
-demoButton.addEventListener("click", () => loadNearby(DEMO_LOCATION));
 refreshButton.addEventListener("click", () => {
   if (!refreshActivePage()) {
     setStatus("Choose a location before refreshing.", "waiting");
@@ -143,15 +139,14 @@ refreshButton.addEventListener("click", () => {
 
 manualForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const lat = Number.parseFloat(latInput.value.trim());
-  const lon = Number.parseFloat(lonInput.value.trim());
+  const query = locationInput.value.trim();
 
-  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
-    setStatus("Enter a valid latitude and longitude.", "error");
+  if (!query) {
+    setStatus("Enter a location to search.", "error");
     return;
   }
 
-  loadNearby({ lat, lon, label: "manual location" });
+  searchLiveLocation(query);
 });
 
 busSelect.addEventListener("change", handleDisplayChange);
@@ -189,8 +184,7 @@ function locateUser() {
   navigator.geolocation.getCurrentPosition(
     (position) => {
       const { latitude: lat, longitude: lon } = position.coords;
-      latInput.value = lat.toFixed(5);
-      lonInput.value = lon.toFixed(5);
+      locationInput.value = "Your location";
       loadNearby({ lat, lon, label: "your location" });
     },
     () => {
@@ -227,6 +221,7 @@ async function loadNearby(location) {
 
   state.loading = true;
   state.lastLocation = location;
+  if (locationInput && location.label) locationInput.value = location.label;
   updateBookmarkUrl();
   updateLiveMap(location);
   setStatus(`Looking for ${formatSelectedModes(options)} near ${location.label}...`, "waiting");
@@ -631,6 +626,52 @@ async function lookupPostcode(query) {
   };
 }
 
+async function searchLiveLocation(query) {
+  setStatus(`Searching for ${query}...`, "waiting");
+  try {
+    const location = await lookupLocation(query);
+    loadNearby(location);
+  } catch (error) {
+    console.error(error);
+    setStatus("Location could not be found. Try a postcode, station, road, or place.", "error");
+  }
+}
+
+async function lookupLocation(query) {
+  const postcodeLocation = await lookupPostcode(query);
+  if (postcodeLocation) return postcodeLocation;
+
+  const stopSearchUrl = new URL(`${API_BASE}/StopPoint/Search/${encodeURIComponent(query)}`);
+  const stopSearchData = await fetchJson(stopSearchUrl);
+  const firstStopMatch = (stopSearchData.matches || []).find(
+    (match) => Number.isFinite(match.lat) && Number.isFinite(match.lon),
+  );
+
+  if (firstStopMatch) {
+    return {
+      label: firstStopMatch.name || query,
+      lat: firstStopMatch.lat,
+      lon: firstStopMatch.lon,
+    };
+  }
+
+  const placeSearchUrl = new URL(`${API_BASE}/Place/Search/${encodeURIComponent(query)}`);
+  const placeSearchData = await fetchJson(placeSearchUrl);
+  const firstPlaceMatch = (placeSearchData.matches || []).find(
+    (match) => Number.isFinite(match.lat) && Number.isFinite(match.lon),
+  );
+
+  if (firstPlaceMatch) {
+    return {
+      label: firstPlaceMatch.name || query,
+      lat: firstPlaceMatch.lat,
+      lon: firstPlaceMatch.lon,
+    };
+  }
+
+  throw new Error("Location not found");
+}
+
 async function findFirstStopWithArrivals(stops) {
   for (const stop of stops.slice(0, 10)) {
     const arrivals = await getArrivals(getStopId(stop), "bus", SELECTED_STOP_ARRIVALS);
@@ -975,8 +1016,7 @@ function restoreFromUrl() {
   const lat = Number.parseFloat(params.get("lat"));
   const lon = Number.parseFloat(params.get("lon"));
   if (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
-    latInput.value = lat.toFixed(5);
-    lonInput.value = lon.toFixed(5);
+    locationInput.value = params.get("q") || params.get("label") || "bookmarked location";
     loadNearby({
       lat,
       lon,
@@ -996,6 +1036,7 @@ function updateBookmarkUrl() {
       params.set("lat", trimCoordinate(state.lastLocation.lat));
       params.set("lon", trimCoordinate(state.lastLocation.lon));
       params.set("label", state.lastLocation.label || "bookmarked location");
+      params.set("q", locationInput.value || state.lastLocation.label || "");
     }
   }
 

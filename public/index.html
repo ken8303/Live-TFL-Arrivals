@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nearest Transit Times</title>
-    <link rel="stylesheet" href="styles.css?v=2026-06-04-googlemap" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-04-livesearch" />
   </head>
   <body>
     <main class="app-shell">
@@ -48,7 +48,6 @@
             </svg>
             Use my location
           </button>
-          <button class="secondary-button" id="demoButton" type="button">Try central London</button>
           <div class="display-controls" aria-label="Display options">
             <label>
               Bus
@@ -65,14 +64,14 @@
               </select>
             </label>
           </div>
-          <form class="manual-form" id="manualForm" aria-label="Manual coordinates">
+          <form class="manual-form live-search-form" id="manualForm" aria-label="Search location">
             <label>
-              Latitude
-              <input id="latInput" inputmode="decimal" placeholder="51.5074" autocomplete="off" />
-            </label>
-            <label>
-              Longitude
-              <input id="lonInput" inputmode="decimal" placeholder="-0.1278" autocomplete="off" />
+              Location
+              <input
+                id="locationInput"
+                placeholder="Postcode, station, road, or place"
+                autocomplete="off"
+              />
             </label>
             <button class="secondary-button" type="submit">Search</button>
           </form>
@@ -178,6 +177,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-04-googlemap"></script>
+    <script src="app.js?v=2026-06-04-livesearch"></script>
   </body>
 </html>
