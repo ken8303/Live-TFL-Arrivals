@@ -1,5 +1,5 @@
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
-const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetDepBoardWithDetails";
+const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2015-05-14/ldb/GetDepBoardWithDetails";
 const LONDON_TIME_ZONE = "Europe/London";
 const londonDateFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: LONDON_TIME_ZONE,
