@@ -1,5 +1,5 @@
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
-const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2017-10-01/ldb/GetDepartureBoard";
+const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2012-01-13/ldb/GetDepartureBoard";
 
 export async function onRequestGet(context) {
   try {
