@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nearest Transit Times</title>
-    <link rel="stylesheet" href="styles.css?v=2026-06-04-livesearch" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-07-delay" />
   </head>
   <body>
     <main class="app-shell">
@@ -62,6 +62,10 @@
                 <option value="show">Show trains</option>
                 <option value="hide">Hide trains</option>
               </select>
+            </label>
+            <label>
+              Delay
+              <select id="liveDelaySelect"></select>
             </label>
           </div>
           <form class="manual-form live-search-form" id="manualForm" aria-label="Search location">
@@ -128,6 +132,10 @@
               <option>Choose an area first</option>
             </select>
           </label>
+          <label>
+            Delay
+            <select id="busDelaySelect"></select>
+          </label>
         </section>
 
         <section class="result-section" aria-label="Selected bus stop arrivals">
@@ -150,6 +158,10 @@
             <select id="trainLineSelect" disabled>
               <option>Choose a station first</option>
             </select>
+          </label>
+          <label>
+            Delay
+            <select id="trainDelaySelect"></select>
           </label>
         </section>
 
@@ -177,6 +189,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-04-livesearch"></script>
+    <script src="app.js?v=2026-06-07-delay"></script>
   </body>
 </html>

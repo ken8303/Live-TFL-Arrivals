@@ -10,6 +10,9 @@ const SELECTED_STOP_ARRIVALS = 5;
 const SELECTED_STOP_CANDIDATES = 30;
 const SELECTED_TRAIN_ARRIVALS = 5;
 const NATIONAL_RAIL_RESULTS = 10;
+const DEFAULT_DELAY_MINUTES = 10;
+const MIN_DELAY_MINUTES = 1;
+const MAX_DELAY_MINUTES = 60;
 const AREAS = [
   { label: "Central London", lat: 51.5074, lon: -0.1278 },
   { label: "King's Cross", lat: 51.5308, lon: -0.1238 },
@@ -88,6 +91,7 @@ const state = {
   selectedTrainLine: null,
   savedStopId: null,
   savedTrainLine: null,
+  delayMinutes: DEFAULT_DELAY_MINUTES,
   nextRefreshAt: null,
   autoRefreshTimer: null,
 };
@@ -119,6 +123,7 @@ const manualForm = document.querySelector("#manualForm");
 const locationInput = document.querySelector("#locationInput");
 const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
+const liveDelaySelect = document.querySelector("#liveDelaySelect");
 const liveMapPreview = document.querySelector("#liveMapPreview");
 const liveMapFrame = document.querySelector("#liveMapFrame");
 const liveMapLegend = document.querySelector("#liveMapLegend");
@@ -127,8 +132,10 @@ const areaSelect = document.querySelector("#areaSelect");
 const selectedStopSelect = document.querySelector("#selectedStopSelect");
 const busStopSearchForm = document.querySelector("#busStopSearchForm");
 const busStopSearchInput = document.querySelector("#busStopSearchInput");
+const busDelaySelect = document.querySelector("#busDelaySelect");
 const trainStationSelect = document.querySelector("#trainStationSelect");
 const trainLineSelect = document.querySelector("#trainLineSelect");
+const trainDelaySelect = document.querySelector("#trainDelaySelect");
 
 locateButton.addEventListener("click", locateUser);
 refreshButton.addEventListener("click", () => {
@@ -151,6 +158,9 @@ manualForm.addEventListener("submit", (event) => {
 
 busSelect.addEventListener("change", handleDisplayChange);
 trainSelect.addEventListener("change", handleDisplayChange);
+liveDelaySelect.addEventListener("change", handleDelayChange);
+busDelaySelect.addEventListener("change", handleDelayChange);
+trainDelaySelect.addEventListener("change", handleDelayChange);
 liveNavButton.addEventListener("click", () => showPage("live"));
 selectNavButton.addEventListener("click", () => showPage("select"));
 selectTrainNavButton.addEventListener("click", () => showPage("train"));
@@ -171,6 +181,7 @@ trainLineSelect.addEventListener("change", () => {
 });
 populateAreas();
 populateTrainStations();
+populateDelaySelects();
 restoreFromUrl();
 startAutoRefresh();
 
@@ -724,6 +735,7 @@ async function getArrivals(stopId, type, limit = MAX_ARRIVALS) {
   return arrivals
     .filter((arrival) => (type === "bus" ? arrival.modeName === "bus" : STATION_MODES.has(arrival.modeName)))
     .sort((a, b) => a.timeToStation - b.timeToStation)
+    .filter((arrival) => isAfterDelay(arrival.timeToStation))
     .slice(0, limit);
 }
 
@@ -737,7 +749,7 @@ async function getStationTrainArrivals(stationId) {
 
 async function getTrainArrivalsForLine(station, lineId) {
   if (lineId === "national-rail" && station.crs) {
-    return getNationalRailArrivals(station.crs, NATIONAL_RAIL_RESULTS);
+    return getNationalRailArrivals(station.crs, NATIONAL_RAIL_RESULTS * 3);
   }
 
   return getStationTrainArrivals(station.id);
@@ -897,6 +909,19 @@ function handleDisplayChange() {
   }
 }
 
+function handleDelayChange(event) {
+  const minutes = clampDelayMinutes(Number.parseInt(event.target.value, 10));
+  state.delayMinutes = minutes;
+  syncDelaySelects();
+  updateBookmarkUrl();
+
+  if (refreshActivePage()) {
+    return;
+  }
+
+  setStatus(`Showing schedules from the next ${minutes} minute${minutes === 1 ? "" : "s"}.`, "ready");
+}
+
 function showPage(page, options = {}) {
   const shouldLoad = options.load !== false;
   state.activePage = page;
@@ -975,6 +1000,18 @@ function populateTrainStations() {
   ).join("");
 }
 
+function populateDelaySelects() {
+  const options = Array.from({ length: MAX_DELAY_MINUTES - MIN_DELAY_MINUTES + 1 }, (_, index) => {
+    const minutes = MIN_DELAY_MINUTES + index;
+    return `<option value="${minutes}">${minutes} min</option>`;
+  }).join("");
+
+  [liveDelaySelect, busDelaySelect, trainDelaySelect].forEach((select) => {
+    select.innerHTML = options;
+  });
+  syncDelaySelects();
+}
+
 function getSelectedArea() {
   return AREAS[Number.parseInt(areaSelect.value, 10)] || AREAS[0];
 }
@@ -989,6 +1026,8 @@ function restoreFromUrl() {
 
   busSelect.value = params.get("bus") === "hide" ? "hide" : "show";
   trainSelect.value = params.get("train") === "hide" ? "hide" : "show";
+  state.delayMinutes = clampDelayMinutes(Number.parseInt(params.get("delay"), 10) || DEFAULT_DELAY_MINUTES);
+  syncDelaySelects();
   updateSectionVisibility(getDisplayOptions());
 
   showPage(page, { load: false });
@@ -1032,6 +1071,7 @@ function updateBookmarkUrl() {
   if (state.activePage === "live") {
     params.set("bus", busSelect.value);
     params.set("train", trainSelect.value);
+    params.set("delay", String(state.delayMinutes));
     if (state.lastLocation) {
       params.set("lat", trimCoordinate(state.lastLocation.lat));
       params.set("lon", trimCoordinate(state.lastLocation.lon));
@@ -1041,6 +1081,7 @@ function updateBookmarkUrl() {
   }
 
   if (state.activePage === "select") {
+    params.set("delay", String(state.delayMinutes));
     if (state.selectedSearchQuery) {
       params.set("q", state.selectedSearchQuery);
     } else {
@@ -1050,6 +1091,7 @@ function updateBookmarkUrl() {
   }
 
   if (state.activePage === "train") {
+    params.set("delay", String(state.delayMinutes));
     const station = state.selectedTrainStation || getSelectedTrainStation();
     params.set("station", station.id);
     if (state.selectedTrainLine) params.set("line", state.selectedTrainLine);
@@ -1125,10 +1167,10 @@ function getArrivalLines(arrivals, station) {
 
 function filterArrivalsByLine(arrivals, lineId) {
   if (lineId === "national-rail") {
-    return arrivals.filter((arrival) => arrival.modeName === "national-rail");
+    return arrivals.filter((arrival) => arrival.modeName === "national-rail" && isAfterDelay(arrival.timeToStation));
   }
 
-  return arrivals.filter((arrival) => arrival.lineId === lineId);
+  return arrivals.filter((arrival) => arrival.lineId === lineId && isAfterDelay(arrival.timeToStation));
 }
 
 function formatLineName(lineId) {
@@ -1144,6 +1186,23 @@ function formatTrainBoardName(lineId) {
 
 function getTrainResultLimit(lineId, station) {
   return lineId === "national-rail" && station.crs ? NATIONAL_RAIL_RESULTS : SELECTED_TRAIN_ARRIVALS;
+}
+
+function clampDelayMinutes(value) {
+  if (!Number.isFinite(value)) return DEFAULT_DELAY_MINUTES;
+  return Math.min(MAX_DELAY_MINUTES, Math.max(MIN_DELAY_MINUTES, value));
+}
+
+function syncDelaySelects() {
+  const value = String(state.delayMinutes);
+  [liveDelaySelect, busDelaySelect, trainDelaySelect].forEach((select) => {
+    select.value = value;
+  });
+}
+
+function isAfterDelay(timeToStation) {
+  if (!Number.isFinite(timeToStation)) return true;
+  return timeToStation >= state.delayMinutes * 60;
 }
 
 function getDisplayOptions() {
