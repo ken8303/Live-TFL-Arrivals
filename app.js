@@ -84,6 +84,8 @@ const TRAIN_STATIONS = [
 const state = {
   activePage: "live",
   lastLocation: null,
+  liveMapPoints: [],
+  selectedLivePointId: null,
   loading: false,
   pendingReload: false,
   selectedAreaStops: [],
@@ -170,6 +172,9 @@ trainDelaySelect.addEventListener("change", handleDelayChange);
 liveRefreshSelect.addEventListener("change", handleRefreshToggle);
 busRefreshSelect.addEventListener("change", handleRefreshToggle);
 trainRefreshSelect.addEventListener("change", handleRefreshToggle);
+stopGrid.addEventListener("click", handleLiveCardClick);
+stationGrid.addEventListener("click", handleLiveCardClick);
+liveMapLegend.addEventListener("click", handleLiveMapLegendClick);
 liveNavButton.addEventListener("click", () => showPage("live"));
 selectNavButton.addEventListener("click", () => showPage("select"));
 selectTrainNavButton.addEventListener("click", () => showPage("train"));
@@ -800,7 +805,7 @@ function renderStops(stopsWithArrivals) {
   stopGrid.innerHTML = "";
 
   stopsWithArrivals.forEach(({ stop, arrivals }) => {
-    stopGrid.append(renderCard({ stop, arrivals, type: "bus", origin: state.lastLocation }));
+    stopGrid.append(renderCard({ stop, arrivals, type: "bus", origin: state.lastLocation, mapMode: "preview" }));
   });
 }
 
@@ -808,7 +813,7 @@ function renderStations(stationsWithDepartures) {
   stationGrid.innerHTML = "";
 
   stationsWithDepartures.forEach(({ stop, arrivals }) => {
-    stationGrid.append(renderCard({ stop, arrivals, type: "train", origin: state.lastLocation }));
+    stationGrid.append(renderCard({ stop, arrivals, type: "train", origin: state.lastLocation, mapMode: "preview" }));
   });
 }
 
@@ -850,21 +855,30 @@ function renderLineStatus(lineStatus, lineId) {
   `;
 }
 
-function renderCard({ stop, arrivals, type, origin = null, boardStation = null }) {
+function renderCard({ stop, arrivals, type, origin = null, boardStation = null, mapMode = "external" }) {
   const node = stopTemplate.content.firstElementChild.cloneNode(true);
   const title = node.querySelector("h2");
   const meta = node.querySelector(".stop-meta");
   const letter = node.querySelector(".stop-letter");
   const list = node.querySelector(".arrival-list");
   const isTrain = type === "train";
+  const mapPointId = getLiveMapPointId(stop, type);
 
   node.classList.toggle("station-card", isTrain);
   title.textContent = cleanStationName(stop.commonName || (isTrain ? "Unnamed station" : "Unnamed bus stop"));
   meta.textContent = isTrain ? `${getTravelMeta(stop, origin)}${getLineSummary(stop)}` : `${getTravelMeta(stop, origin)}${getTowards(stop)}`;
   letter.textContent = isTrain ? "Train" : stop.stopLetter || stop.indicator || "Bus";
-  node.href = getMapUrl(stop);
-  node.setAttribute("aria-label", `Open ${title.textContent} in Google Maps`);
-  node.title = "Open in Google Maps";
+  if (mapMode === "preview") {
+    node.href = "#liveMapPreview";
+    node.dataset.mapMode = "preview";
+    node.dataset.mapPointId = mapPointId;
+    node.setAttribute("aria-label", `Show route to ${title.textContent} in map preview`);
+    node.title = "Show route in map preview";
+  } else {
+    node.href = getMapUrl(stop);
+    node.setAttribute("aria-label", `Open ${title.textContent} in Google Maps`);
+    node.title = "Open in Google Maps";
+  }
 
   if (!arrivals.length) {
     list.innerHTML = `<li class="empty-state">No live ${isTrain ? "train departures" : "arrivals"} here right now.</li>`;
@@ -946,6 +960,26 @@ function handleRefreshToggle(event) {
   } else {
     setStatus("Auto refresh is off.", "ready");
   }
+}
+
+function handleLiveCardClick(event) {
+  const card = event.target.closest("[data-map-mode='preview'][data-map-point-id]");
+  if (!card || !state.lastLocation) return;
+  event.preventDefault();
+  selectLiveMapPoint(card.dataset.mapPointId);
+}
+
+function handleLiveMapLegendClick(event) {
+  const button = event.target.closest("[data-map-point-id]");
+  if (!button || !state.lastLocation) return;
+  event.preventDefault();
+  selectLiveMapPoint(button.dataset.mapPointId);
+}
+
+function selectLiveMapPoint(pointId) {
+  state.selectedLivePointId = pointId === "__overview__" ? null : pointId;
+  updateLiveMap(state.lastLocation, state.liveMapPoints);
+  liveMapPreview.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function showPage(page, options = {}) {
@@ -1292,17 +1326,27 @@ function updateLiveMap(location, points = []) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     liveMapFrame.removeAttribute("src");
     liveMapLegend.innerHTML = "";
+    state.liveMapPoints = [];
+    state.selectedLivePointId = null;
     mapPreviewText.textContent = "Choose a location to preview nearby stops and stations";
     return;
   }
 
+  state.liveMapPoints = points;
+  if (state.selectedLivePointId && !points.some((point) => point.id === state.selectedLivePointId)) {
+    state.selectedLivePointId = null;
+  }
+
+  const selectedPoint = points.find((point) => point.id === state.selectedLivePointId) || null;
   mapPreviewText.textContent =
-    points.length > 0
+    selectedPoint
+      ? `Showing route from ${location.label || "your search"} to ${selectedPoint.label}`
+      : points.length > 0
       ? `Showing ${points.length} locations around ${location.label || "this area"}`
       : location.label
         ? `Centered on ${location.label}`
         : "Current search area";
-  renderLiveMap(location, points);
+  renderLiveMap(location, points, selectedPoint);
 }
 
 function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) {
@@ -1313,6 +1357,7 @@ function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) 
       const lon = Number(stop?.lon);
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
         points.push({
+          id: getLiveMapPointId(stop, "bus"),
           type: "bus",
           lat,
           lon,
@@ -1329,6 +1374,7 @@ function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) 
       const lon = Number(stop?.lon);
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
         points.push({
+          id: getLiveMapPointId(stop, "train"),
           type: "train",
           lat,
           lon,
@@ -1342,17 +1388,17 @@ function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) 
   return points;
 }
 
-function renderLiveMap(location, points) {
-  liveMapFrame.src = buildGoogleMapEmbedUrl(location, points);
-  renderMapLegend(location, points);
+function renderLiveMap(location, points, selectedPoint = null) {
+  liveMapFrame.src = buildGoogleMapEmbedUrl(location, selectedPoint ? [selectedPoint] : points);
+  renderMapLegend(location, points, selectedPoint);
 }
 
-function renderMapLegend(location, points) {
+function renderMapLegend(location, points, selectedPoint = null) {
   const legendItems = [
     {
+      id: "__overview__",
       type: "current",
-      label: location.label || "Search area",
-      href: getMapUrl(location),
+      label: selectedPoint ? "Back to overview" : location.label || "Search area",
     },
     ...points,
   ];
@@ -1360,10 +1406,14 @@ function renderMapLegend(location, points) {
   liveMapLegend.innerHTML = legendItems
     .map(
       (item) => `
-        <a class="legend-pill" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">
+        <button
+          class="legend-pill${item.id === selectedPoint?.id || (item.id === "__overview__" && !selectedPoint) ? " active" : ""}"
+          type="button"
+          data-map-point-id="${escapeHtml(item.id)}"
+        >
           <span class="legend-dot ${item.type}"></span>
           ${escapeHtml(item.label)}
-        </a>
+        </button>
       `,
     )
     .join("");
@@ -1522,6 +1572,12 @@ function getMapUrl(stop) {
   const hasCoordinates = Number.isFinite(stop.lat) && Number.isFinite(stop.lon) && stop.lat !== 0 && stop.lon !== 0;
   const query = hasCoordinates ? `${stop.lat},${stop.lon}` : name;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+function getLiveMapPointId(stop, type) {
+  const stopId = getStopId(stop);
+  if (stopId) return `${type}:${stopId}`;
+  return `${type}:${Number(stop.lat).toFixed(5)},${Number(stop.lon).toFixed(5)}`;
 }
 
 function cleanStationName(name) {
