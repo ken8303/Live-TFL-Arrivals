@@ -1,7 +1,7 @@
 import { onRequestGet as getNationalRailArrivals } from "./functions/api/national-rail/arrivals.js";
 import { onRequestGet as getNationalRailConfig } from "./functions/api/national-rail/config.js";
 
-const APP_VERSION = "2026-06-08-nationalrailcard";
+const APP_VERSION = "2026-06-08-livedelay0";
 
 export default {
   async fetch(request, env) {

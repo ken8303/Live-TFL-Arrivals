@@ -10,8 +10,9 @@ const SELECTED_STOP_ARRIVALS = 5;
 const SELECTED_STOP_CANDIDATES = 30;
 const SELECTED_TRAIN_ARRIVALS = 5;
 const NATIONAL_RAIL_RESULTS = 10;
+const DEFAULT_LIVE_DELAY_MINUTES = 0;
 const DEFAULT_DELAY_MINUTES = 10;
-const MIN_DELAY_MINUTES = 1;
+const MIN_DELAY_MINUTES = 0;
 const MAX_DELAY_MINUTES = 60;
 const AREAS = [
   { label: "Central London", lat: 51.5074, lon: -0.1278 },
@@ -91,7 +92,7 @@ const state = {
   selectedTrainLine: null,
   savedStopId: null,
   savedTrainLine: null,
-  delayMinutes: DEFAULT_DELAY_MINUTES,
+  delayMinutes: DEFAULT_LIVE_DELAY_MINUTES,
   autoRefreshEnabled: false,
   nextRefreshAt: null,
   autoRefreshTimer: null,
@@ -1057,7 +1058,9 @@ function restoreFromUrl() {
 
   busSelect.value = params.get("bus") === "hide" ? "hide" : "show";
   trainSelect.value = params.get("train") === "hide" ? "hide" : "show";
-  state.delayMinutes = clampDelayMinutes(Number.parseInt(params.get("delay"), 10) || DEFAULT_DELAY_MINUTES);
+  const delayParam = params.get("delay");
+  const defaultDelay = page === "live" ? DEFAULT_LIVE_DELAY_MINUTES : DEFAULT_DELAY_MINUTES;
+  state.delayMinutes = clampDelayMinutes(delayParam === null ? defaultDelay : Number.parseInt(delayParam, 10));
   state.autoRefreshEnabled = params.get("refresh") === "on";
   syncDelaySelects();
   syncRefreshSelects();
@@ -1225,7 +1228,7 @@ function getTrainResultLimit(lineId, station) {
 }
 
 function clampDelayMinutes(value) {
-  if (!Number.isFinite(value)) return DEFAULT_DELAY_MINUTES;
+  if (!Number.isFinite(value)) return state.activePage === "live" ? DEFAULT_LIVE_DELAY_MINUTES : DEFAULT_DELAY_MINUTES;
   return Math.min(MAX_DELAY_MINUTES, Math.max(MIN_DELAY_MINUTES, value));
 }
 
