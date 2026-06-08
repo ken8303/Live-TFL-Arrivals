@@ -547,10 +547,15 @@ select:focus {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 12px;
-  align-items: center;
+  align-items: start;
   min-height: 74px;
   padding: 14px 18px;
   background: #fff;
+}
+
+.arrival.national-rail-arrival {
+  min-height: 104px;
+  padding: 18px 20px;
 }
 
 .route {
@@ -585,6 +590,22 @@ select:focus {
 .eta {
   font-size: 1.55rem;
   font-weight: 900;
+  white-space: nowrap;
+}
+
+.eta-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+}
+
+.platform-detail {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--muted);
+  text-align: right;
   white-space: nowrap;
 }
 

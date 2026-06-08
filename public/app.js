@@ -870,6 +870,7 @@ function renderCard({ stop, arrivals, type, origin = null, boardStation = null }
     arrivals.forEach((arrival) => {
       const item = document.createElement("li");
       item.className = "arrival";
+      item.classList.toggle("national-rail-arrival", arrival.modeName === "national-rail");
       item.innerHTML = `
         <span class="route">${escapeHtml(arrival.lineName || arrival.lineId || (isTrain ? "Train" : "Bus"))}</span>
         <span class="destination">
@@ -877,7 +878,10 @@ function renderCard({ stop, arrivals, type, origin = null, boardStation = null }
           <span>${escapeHtml(formatJourneyDetail(arrival, boardStation))}</span>
           ${formatCallingPoints(arrival)}
         </span>
-        <span class="eta">${formatEta(arrival.timeToStation)}</span>
+        <span class="eta-block">
+          <span class="eta">${formatEta(arrival.timeToStation)}</span>
+          ${formatPlatformDisplay(arrival)}
+        </span>
       `;
       list.append(item);
     });
@@ -1471,11 +1475,16 @@ function formatDestinationText(arrival, boardStation) {
 
 function formatJourneyDetail(arrival, boardStation) {
   const time = formatExpectedTime(arrival.expectedArrival);
-  const platform = formatPlatform(arrival.platformName);
   if (arrival.modeName === "national-rail" && boardStation) {
-    return `Leaves ${boardStation.name} at ${time}${platform}`;
+    return `Leaves ${boardStation.name} at ${time}`;
   }
+  const platform = formatPlatform(arrival.platformName);
   return `${time}${platform}`;
+}
+
+function formatPlatformDisplay(arrival) {
+  if (arrival.modeName !== "national-rail" || !arrival.platformName) return "";
+  return `<span class="platform-detail">${escapeHtml(arrival.platformName)}</span>`;
 }
 
 function formatCallingPoints(arrival) {
