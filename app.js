@@ -5,7 +5,7 @@ const MAX_ARRIVALS = 3;
 const CANDIDATE_BUS_STOPS = 10;
 const CANDIDATE_STATIONS = 8;
 const STATION_MODES = new Set(["tube", "dlr", "overground", "elizabeth-line", "national-rail", "tram"]);
-const AUTO_REFRESH_SECONDS = 30;
+const AUTO_REFRESH_SECONDS = 60;
 const SELECTED_STOP_ARRIVALS = 5;
 const SELECTED_STOP_CANDIDATES = 30;
 const SELECTED_TRAIN_ARRIVALS = 5;
@@ -92,6 +92,7 @@ const state = {
   savedStopId: null,
   savedTrainLine: null,
   delayMinutes: DEFAULT_DELAY_MINUTES,
+  autoRefreshEnabled: false,
   nextRefreshAt: null,
   autoRefreshTimer: null,
 };
@@ -124,6 +125,7 @@ const locationInput = document.querySelector("#locationInput");
 const busSelect = document.querySelector("#busSelect");
 const trainSelect = document.querySelector("#trainSelect");
 const liveDelaySelect = document.querySelector("#liveDelaySelect");
+const liveRefreshSelect = document.querySelector("#liveRefreshSelect");
 const liveMapPreview = document.querySelector("#liveMapPreview");
 const liveMapFrame = document.querySelector("#liveMapFrame");
 const liveMapLegend = document.querySelector("#liveMapLegend");
@@ -133,9 +135,11 @@ const selectedStopSelect = document.querySelector("#selectedStopSelect");
 const busStopSearchForm = document.querySelector("#busStopSearchForm");
 const busStopSearchInput = document.querySelector("#busStopSearchInput");
 const busDelaySelect = document.querySelector("#busDelaySelect");
+const busRefreshSelect = document.querySelector("#busRefreshSelect");
 const trainStationSelect = document.querySelector("#trainStationSelect");
 const trainLineSelect = document.querySelector("#trainLineSelect");
 const trainDelaySelect = document.querySelector("#trainDelaySelect");
+const trainRefreshSelect = document.querySelector("#trainRefreshSelect");
 
 locateButton.addEventListener("click", locateUser);
 refreshButton.addEventListener("click", () => {
@@ -161,6 +165,9 @@ trainSelect.addEventListener("change", handleDisplayChange);
 liveDelaySelect.addEventListener("change", handleDelayChange);
 busDelaySelect.addEventListener("change", handleDelayChange);
 trainDelaySelect.addEventListener("change", handleDelayChange);
+liveRefreshSelect.addEventListener("change", handleRefreshToggle);
+busRefreshSelect.addEventListener("change", handleRefreshToggle);
+trainRefreshSelect.addEventListener("change", handleRefreshToggle);
 liveNavButton.addEventListener("click", () => showPage("live"));
 selectNavButton.addEventListener("click", () => showPage("select"));
 selectTrainNavButton.addEventListener("click", () => showPage("train"));
@@ -922,6 +929,19 @@ function handleDelayChange(event) {
   setStatus(`Showing schedules from the next ${minutes} minute${minutes === 1 ? "" : "s"}.`, "ready");
 }
 
+function handleRefreshToggle(event) {
+  state.autoRefreshEnabled = event.target.value === "on";
+  syncRefreshSelects();
+  scheduleNextRefresh();
+  updateBookmarkUrl();
+
+  if (state.autoRefreshEnabled) {
+    setStatus("Auto refresh is on. Schedules will refresh every 1 min.", "ready");
+  } else {
+    setStatus("Auto refresh is off.", "ready");
+  }
+}
+
 function showPage(page, options = {}) {
   const shouldLoad = options.load !== false;
   state.activePage = page;
@@ -1012,6 +1032,13 @@ function populateDelaySelects() {
   syncDelaySelects();
 }
 
+function syncRefreshSelects() {
+  const value = state.autoRefreshEnabled ? "on" : "off";
+  [liveRefreshSelect, busRefreshSelect, trainRefreshSelect].forEach((select) => {
+    select.value = value;
+  });
+}
+
 function getSelectedArea() {
   return AREAS[Number.parseInt(areaSelect.value, 10)] || AREAS[0];
 }
@@ -1027,7 +1054,9 @@ function restoreFromUrl() {
   busSelect.value = params.get("bus") === "hide" ? "hide" : "show";
   trainSelect.value = params.get("train") === "hide" ? "hide" : "show";
   state.delayMinutes = clampDelayMinutes(Number.parseInt(params.get("delay"), 10) || DEFAULT_DELAY_MINUTES);
+  state.autoRefreshEnabled = params.get("refresh") === "on";
   syncDelaySelects();
+  syncRefreshSelects();
   updateSectionVisibility(getDisplayOptions());
 
   showPage(page, { load: false });
@@ -1072,6 +1101,7 @@ function updateBookmarkUrl() {
     params.set("bus", busSelect.value);
     params.set("train", trainSelect.value);
     params.set("delay", String(state.delayMinutes));
+    params.set("refresh", state.autoRefreshEnabled ? "on" : "off");
     if (state.lastLocation) {
       params.set("lat", trimCoordinate(state.lastLocation.lat));
       params.set("lon", trimCoordinate(state.lastLocation.lon));
@@ -1082,6 +1112,7 @@ function updateBookmarkUrl() {
 
   if (state.activePage === "select") {
     params.set("delay", String(state.delayMinutes));
+    params.set("refresh", state.autoRefreshEnabled ? "on" : "off");
     if (state.selectedSearchQuery) {
       params.set("q", state.selectedSearchQuery);
     } else {
@@ -1092,6 +1123,7 @@ function updateBookmarkUrl() {
 
   if (state.activePage === "train") {
     params.set("delay", String(state.delayMinutes));
+    params.set("refresh", state.autoRefreshEnabled ? "on" : "off");
     const station = state.selectedTrainStation || getSelectedTrainStation();
     params.set("station", station.id);
     if (state.selectedTrainLine) params.set("line", state.selectedTrainLine);
@@ -1336,7 +1368,7 @@ function buildGoogleMapEmbedUrl(location, points) {
 function startAutoRefresh() {
   scheduleNextRefresh();
   state.autoRefreshTimer = window.setInterval(() => {
-    if (state.nextRefreshAt && Date.now() >= state.nextRefreshAt && !state.loading) {
+    if (state.autoRefreshEnabled && state.nextRefreshAt && Date.now() >= state.nextRefreshAt && !state.loading) {
       if (!refreshActivePage()) scheduleNextRefresh();
       return;
     }
@@ -1346,13 +1378,23 @@ function startAutoRefresh() {
 }
 
 function scheduleNextRefresh() {
+  if (!state.autoRefreshEnabled) {
+    state.nextRefreshAt = null;
+    updateRefreshCountdown();
+    return;
+  }
   state.nextRefreshAt = Date.now() + AUTO_REFRESH_SECONDS * 1000;
   updateRefreshCountdown();
 }
 
 function updateRefreshCountdown() {
+  if (!state.autoRefreshEnabled) {
+    refreshCountdown.textContent = "Auto refresh off";
+    return;
+  }
+
   if (!hasRefreshTarget()) {
-    refreshCountdown.textContent = `Auto refresh every ${AUTO_REFRESH_SECONDS}s`;
+    refreshCountdown.textContent = "Auto refresh on - every 1 min";
     return;
   }
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nearest Transit Times</title>
-    <link rel="stylesheet" href="styles.css?v=2026-06-07-delay" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-08-refreshtoggle" />
   </head>
   <body>
     <main class="app-shell">
@@ -35,7 +35,7 @@
         </div>
         <div class="status-times">
           <p class="last-updated" id="lastUpdated"></p>
-          <p class="refresh-countdown" id="refreshCountdown">Auto refresh every 30s</p>
+          <p class="refresh-countdown" id="refreshCountdown">Auto refresh off</p>
         </div>
       </section>
 
@@ -66,6 +66,13 @@
             <label>
               Delay
               <select id="liveDelaySelect"></select>
+            </label>
+            <label>
+              Refresh
+              <select id="liveRefreshSelect">
+                <option value="off">Off</option>
+                <option value="on">On</option>
+              </select>
             </label>
           </div>
           <form class="manual-form live-search-form" id="manualForm" aria-label="Search location">
@@ -136,6 +143,13 @@
             Delay
             <select id="busDelaySelect"></select>
           </label>
+          <label>
+            Refresh
+            <select id="busRefreshSelect">
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+          </label>
         </section>
 
         <section class="result-section" aria-label="Selected bus stop arrivals">
@@ -163,6 +177,13 @@
             Delay
             <select id="trainDelaySelect"></select>
           </label>
+          <label>
+            Refresh
+            <select id="trainRefreshSelect">
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+          </label>
         </section>
 
         <section class="result-section" aria-label="Selected train station arrivals">
@@ -189,6 +210,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-07-delay"></script>
+    <script src="app.js?v=2026-06-08-refreshtoggle"></script>
   </body>
 </html>
