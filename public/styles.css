@@ -714,4 +714,49 @@ select:focus {
   .mini-map {
     min-height: 220px;
   }
+
+  .stop-header {
+    align-items: flex-start;
+  }
+
+  .stop-header h2 {
+    font-size: 1.05rem;
+  }
+
+  .arrival {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "route eta"
+      "destination destination";
+    gap: 10px 14px;
+    padding: 14px 16px;
+  }
+
+  .arrival.national-rail-arrival {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .route {
+    grid-area: route;
+    justify-self: start;
+    max-width: 100%;
+  }
+
+  .destination {
+    grid-area: destination;
+  }
+
+  .eta-block {
+    grid-area: eta;
+    gap: 4px;
+  }
+
+  .eta {
+    font-size: 1.35rem;
+  }
+
+  .platform-detail {
+    white-space: normal;
+  }
 }
