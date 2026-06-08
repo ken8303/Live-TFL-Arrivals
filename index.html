@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nearest Transit Times</title>
-    <link rel="stylesheet" href="styles.css?v=2026-06-08-livedelay0" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-08-livecounts" />
   </head>
   <body>
     <main class="app-shell">
@@ -50,17 +50,25 @@
           </button>
           <div class="display-controls" aria-label="Display options">
             <label>
-              Bus
+              Bus stops
               <select id="busSelect">
-                <option value="show">Show buses</option>
-                <option value="hide">Hide buses</option>
+                <option value="0">0</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
               </select>
             </label>
             <label>
-              Train
+              Train stations
               <select id="trainSelect">
-                <option value="show">Show trains</option>
-                <option value="hide">Hide trains</option>
+                <option value="0">0</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
               </select>
             </label>
             <label>
@@ -210,6 +218,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-08-livedelay0"></script>
+    <script src="app.js?v=2026-06-08-livecounts"></script>
   </body>
 </html>

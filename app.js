@@ -1,6 +1,7 @@
 const API_BASE = "https://api.tfl.gov.uk";
-const MAX_BUS_STOPS = 3;
-const MAX_STATIONS = 2;
+const DEFAULT_LIVE_BUS_STOPS = 3;
+const DEFAULT_LIVE_TRAIN_STATIONS = 3;
+const MAX_LIVE_DISPLAY_COUNT = 5;
 const MAX_ARRIVALS = 3;
 const CANDIDATE_BUS_STOPS = 10;
 const CANDIDATE_STATIONS = 8;
@@ -232,7 +233,7 @@ async function loadNearby(location) {
     updateLiveMap(location);
     stopGrid.innerHTML = "";
     stationGrid.innerHTML = "";
-    setStatus("Turn on buses or trains to display live arrivals.", "waiting");
+    setStatus("Choose at least 1 bus stop or 1 train station to display live arrivals.", "waiting");
     updateBookmarkUrl();
     scheduleNextRefresh();
     return;
@@ -246,20 +247,20 @@ async function loadNearby(location) {
   setStatus(`Looking for ${formatSelectedModes(options)} near ${location.label}...`, "waiting");
   lastUpdated.textContent = "";
   if (options.showBus) {
-    renderSkeletons(stopGrid, MAX_BUS_STOPS);
+    renderSkeletons(stopGrid, options.busCount);
   } else {
     stopGrid.innerHTML = "";
   }
   if (options.showTrain) {
-    renderSkeletons(stationGrid, MAX_STATIONS);
+    renderSkeletons(stationGrid, options.trainCount);
   } else {
     stationGrid.innerHTML = "";
   }
 
   try {
     const [stops, stations] = await Promise.all([
-      options.showBus ? findClosestBusStops(location) : Promise.resolve([]),
-      options.showTrain ? findClosestStations(location) : Promise.resolve([]),
+      options.showBus ? findClosestBusStops(location, options.busCount) : Promise.resolve([]),
+      options.showTrain ? findClosestStations(location, options.trainCount) : Promise.resolve([]),
     ]);
 
     if (!stops.length && !stations.length) {
@@ -277,7 +278,7 @@ async function loadNearby(location) {
     );
     const liveStops = candidatesWithArrivals.filter(({ arrivals }) => arrivals.length > 0);
     const emptyStops = candidatesWithArrivals.filter(({ arrivals }) => arrivals.length === 0);
-    const stopsWithArrivals = [...liveStops, ...emptyStops].slice(0, MAX_BUS_STOPS);
+    const stopsWithArrivals = [...liveStops, ...emptyStops].slice(0, options.busCount);
 
     const candidatesWithDepartures = await Promise.all(
       stations.map(async (stop) => ({
@@ -287,7 +288,7 @@ async function loadNearby(location) {
     );
     const liveStations = candidatesWithDepartures.filter(({ arrivals }) => arrivals.length > 0);
     const emptyStations = candidatesWithDepartures.filter(({ arrivals }) => arrivals.length === 0);
-    const stationsWithDepartures = [...liveStations, ...emptyStations].slice(0, MAX_STATIONS);
+    const stationsWithDepartures = [...liveStations, ...emptyStations].slice(0, options.trainCount);
 
     if (options.showBus) renderStops(stopsWithArrivals);
     if (options.showTrain) renderStations(stationsWithDepartures);
@@ -577,12 +578,12 @@ async function loadSelectedTrainLine(station, lineId) {
   }
 }
 
-async function findClosestBusStops(location) {
+async function findClosestBusStops(location, targetCount) {
   return findClosestPlaces({
     ...location,
     stopTypes: "NaptanPublicBusCoachTram",
     modes: "bus",
-    targetCount: MAX_BUS_STOPS,
+    targetCount,
     candidateCount: CANDIDATE_BUS_STOPS,
   });
 }
@@ -703,12 +704,12 @@ async function findFirstStopWithArrivals(stops) {
   };
 }
 
-async function findClosestStations(location) {
+async function findClosestStations(location, targetCount) {
   return findClosestPlaces({
     ...location,
     stopTypes: "NaptanMetroStation,NaptanRailStation",
     modes: "tube,dlr,overground,elizabeth-line,national-rail",
-    targetCount: MAX_STATIONS,
+    targetCount,
     candidateCount: CANDIDATE_STATIONS,
   });
 }
@@ -915,7 +916,7 @@ function handleDisplayChange() {
   if (state.lastLocation) {
     loadNearby(state.lastLocation);
   } else if (!options.showBus && !options.showTrain) {
-    setStatus("Turn on buses or trains to display live arrivals.", "waiting");
+    setStatus("Choose at least 1 bus stop or 1 train station to display live arrivals.", "waiting");
   } else {
     setStatus(`Choose a location to see nearby ${formatSelectedModes(options)}.`, "waiting");
   }
@@ -1056,8 +1057,8 @@ function restoreFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const page = ["live", "select", "train"].includes(params.get("page")) ? params.get("page") : "live";
 
-  busSelect.value = params.get("bus") === "hide" ? "hide" : "show";
-  trainSelect.value = params.get("train") === "hide" ? "hide" : "show";
+  busSelect.value = String(parseLiveCountParam(params.get("bus"), DEFAULT_LIVE_BUS_STOPS));
+  trainSelect.value = String(parseLiveCountParam(params.get("train"), DEFAULT_LIVE_TRAIN_STATIONS));
   const delayParam = params.get("delay");
   const defaultDelay = page === "live" ? DEFAULT_LIVE_DELAY_MINUTES : DEFAULT_DELAY_MINUTES;
   state.delayMinutes = clampDelayMinutes(delayParam === null ? defaultDelay : Number.parseInt(delayParam, 10));
@@ -1245,9 +1246,13 @@ function isAfterDelay(timeToStation) {
 }
 
 function getDisplayOptions() {
+  const busCount = clampLiveDisplayCount(Number.parseInt(busSelect.value, 10), DEFAULT_LIVE_BUS_STOPS);
+  const trainCount = clampLiveDisplayCount(Number.parseInt(trainSelect.value, 10), DEFAULT_LIVE_TRAIN_STATIONS);
   return {
-    showBus: busSelect.value === "show",
-    showTrain: trainSelect.value === "show",
+    busCount,
+    trainCount,
+    showBus: busCount > 0,
+    showTrain: trainCount > 0,
   };
 }
 
@@ -1268,6 +1273,17 @@ function formatResultStatus(busCount, trainCount, { showBus, showTrain }) {
   if (showBus) return `Showing ${busCount} bus stops.`;
   if (showTrain) return `Showing ${trainCount} train stations.`;
   return "No arrivals selected.";
+}
+
+function clampLiveDisplayCount(value, fallback) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(MAX_LIVE_DISPLAY_COUNT, Math.max(0, value));
+}
+
+function parseLiveCountParam(value, fallback) {
+  if (value === "hide") return 0;
+  if (value === "show") return fallback;
+  return clampLiveDisplayCount(Number.parseInt(value, 10), fallback);
 }
 
 function updateLiveMap(location, points = []) {
