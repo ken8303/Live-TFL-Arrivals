@@ -1,0 +1,25 @@
+{
+  "name": "Live TfL Arrivals",
+  "short_name": "TfL Arrivals",
+  "description": "Live nearby bus stops, train stations, and National Rail departures in London.",
+  "start_url": "/?page=live&bus=3&train=3&delay=0&refresh=off",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#005eb8",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

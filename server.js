@@ -8,11 +8,22 @@ const HOST = process.env.HOST || "127.0.0.1";
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
 const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2015-05-14/ldb/GetDepBoardWithDetails";
 const LONDON_TIME_ZONE = "Europe/London";
-const PUBLIC_FILES = new Set(["/", "/index.html", "/styles.css", "/app.js"]);
+const PUBLIC_FILES = new Set([
+  "/",
+  "/index.html",
+  "/styles.css",
+  "/app.js",
+  "/manifest.webmanifest",
+  "/service-worker.js",
+  "/icon.svg",
+  "/icon-maskable.svg",
+]);
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
 const londonDateFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: LONDON_TIME_ZONE,
