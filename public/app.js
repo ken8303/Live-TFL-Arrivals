@@ -16,6 +16,16 @@ const DEFAULT_LIVE_DELAY_MINUTES = 0;
 const DEFAULT_DELAY_MINUTES = 10;
 const MIN_DELAY_MINUTES = 0;
 const MAX_DELAY_MINUTES = 60;
+const SCHEDULE_STORAGE_KEY = "live-tfl-arrivals-schedules";
+const SCHEDULE_WEEKDAYS = [
+  { value: 1, label: "Mon", longLabel: "Monday" },
+  { value: 2, label: "Tue", longLabel: "Tuesday" },
+  { value: 3, label: "Wed", longLabel: "Wednesday" },
+  { value: 4, label: "Thu", longLabel: "Thursday" },
+  { value: 5, label: "Fri", longLabel: "Friday" },
+  { value: 6, label: "Sat", longLabel: "Saturday" },
+  { value: 0, label: "Sun", longLabel: "Sunday" },
+];
 const AREAS = [
   { label: "Central London", lat: 51.5074, lon: -0.1278 },
   { label: "King's Cross", lat: 51.5308, lon: -0.1238 },
@@ -109,14 +119,20 @@ const state = {
   autoRefreshEnabled: false,
   nextRefreshAt: null,
   autoRefreshTimer: null,
+  schedulerDraft: null,
+  savedSchedules: [],
+  schedulerTimer: null,
+  schedulerTimeoutAt: null,
 };
 
 const livePage = document.querySelector("#livePage");
 const selectPage = document.querySelector("#selectPage");
 const selectTrainPage = document.querySelector("#selectTrainPage");
+const schedulerPage = document.querySelector("#schedulerPage");
 const liveNavButton = document.querySelector("#liveNavButton");
 const selectNavButton = document.querySelector("#selectNavButton");
 const selectTrainNavButton = document.querySelector("#selectTrainNavButton");
+const schedulerNavButton = document.querySelector("#schedulerNavButton");
 const stopGrid = document.querySelector("#stopGrid");
 const stationGrid = document.querySelector("#stationGrid");
 const busSection = document.querySelector('[aria-label="Nearest bus stops"]');
@@ -152,6 +168,7 @@ const busRouteSelect = document.querySelector("#busRouteSelect");
 const busDestinationSelect = document.querySelector("#busDestinationSelect");
 const busDelaySelect = document.querySelector("#busDelaySelect");
 const busRefreshSelect = document.querySelector("#busRefreshSelect");
+const busScheduleButton = document.querySelector("#busScheduleButton");
 const trainLocateButton = document.querySelector("#trainLocateButton");
 const trainLocationForm = document.querySelector("#trainLocationForm");
 const trainLocationInput = document.querySelector("#trainLocationInput");
@@ -160,6 +177,19 @@ const trainLineSelect = document.querySelector("#trainLineSelect");
 const trainDestinationSelect = document.querySelector("#trainDestinationSelect");
 const trainDelaySelect = document.querySelector("#trainDelaySelect");
 const trainRefreshSelect = document.querySelector("#trainRefreshSelect");
+const trainScheduleButton = document.querySelector("#trainScheduleButton");
+const schedulerDraftType = document.querySelector("#schedulerDraftType");
+const schedulerDraftTitle = document.querySelector("#schedulerDraftTitle");
+const schedulerDraftSubtitle = document.querySelector("#schedulerDraftSubtitle");
+const enableNotificationsButton = document.querySelector("#enableNotificationsButton");
+const testNotificationButton = document.querySelector("#testNotificationButton");
+const notificationSupportText = document.querySelector("#notificationSupportText");
+const notificationPermissionText = document.querySelector("#notificationPermissionText");
+const schedulerTimeInput = document.querySelector("#schedulerTimeInput");
+const weekdayGrid = document.querySelector("#weekdayGrid");
+const schedulerPreviewList = document.querySelector("#schedulerPreviewList");
+const saveScheduleButton = document.querySelector("#saveScheduleButton");
+const savedSchedulesList = document.querySelector("#savedSchedulesList");
 
 locateButton.addEventListener("click", locateUser);
 refreshButton.addEventListener("click", () => {
@@ -194,6 +224,7 @@ liveMapLegend.addEventListener("click", handleLiveMapLegendClick);
 liveNavButton.addEventListener("click", () => showPage("live"));
 selectNavButton.addEventListener("click", () => showPage("select"));
 selectTrainNavButton.addEventListener("click", () => showPage("train"));
+schedulerNavButton.addEventListener("click", () => showPage("scheduler"));
 busLocateButton.addEventListener("click", () => locateForSelection("bus"));
 busLocationForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -218,6 +249,7 @@ busDestinationSelect.addEventListener("change", () => {
   state.selectedBusDestination = busDestinationSelect.value;
   renderSelectedStopWithFilters();
 });
+busScheduleButton.addEventListener("click", () => openSchedulerFromSelection("bus"));
 trainLocateButton.addEventListener("click", () => locateForSelection("train"));
 trainLocationForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -236,11 +268,20 @@ trainDestinationSelect.addEventListener("change", () => {
   state.selectedTrainDestination = trainDestinationSelect.value;
   renderSelectedTrainWithFilters();
 });
+trainScheduleButton.addEventListener("click", () => openSchedulerFromSelection("train"));
+enableNotificationsButton.addEventListener("click", requestNotificationPermission);
+testNotificationButton.addEventListener("click", sendTestNotification);
+saveScheduleButton.addEventListener("click", saveCurrentSchedule);
+weekdayGrid.addEventListener("change", renderSchedulerPreview);
+savedSchedulesList.addEventListener("click", handleSavedSchedulesClick);
 populateTrainStations();
 populateDelaySelects();
+loadSavedSchedules();
 restoreFromUrl();
 startAutoRefresh();
 registerServiceWorker();
+refreshSchedulerUi();
+scheduleSavedNotifications();
 
 function locateUser() {
   if (!navigator.geolocation) {
@@ -720,6 +761,7 @@ function renderSelectedStopWithFilters() {
   ).slice(0, SELECTED_STOP_ARRIVALS);
   renderSelectedStop(state.selectedStop, filteredArrivals);
   setSelectedStopStatus(state.selectedStop, filteredArrivals.length);
+  updateScheduleButtons();
   updateBookmarkUrl();
 }
 
@@ -745,6 +787,7 @@ function renderSelectedTrainWithFilters(lineStatus = null) {
   const filteredArrivals = filterArrivalsByDestination(state.selectedTrainArrivals, state.selectedTrainDestination);
   renderSelectedTrainStation(station, filteredArrivals, lineId);
   setTrainStationStatus(station, lineId, filteredArrivals.length, lineStatus);
+  updateScheduleButtons();
   updateBookmarkUrl();
 }
 
@@ -1237,12 +1280,15 @@ function showPage(page, options = {}) {
   livePage.hidden = page !== "live";
   selectPage.hidden = page !== "select";
   selectTrainPage.hidden = page !== "train";
+  schedulerPage.hidden = page !== "scheduler";
   liveNavButton.classList.toggle("active", page === "live");
   selectNavButton.classList.toggle("active", page === "select");
   selectTrainNavButton.classList.toggle("active", page === "train");
+  schedulerNavButton.classList.toggle("active", page === "scheduler");
   liveNavButton.setAttribute("aria-pressed", String(page === "live"));
   selectNavButton.setAttribute("aria-pressed", String(page === "select"));
   selectTrainNavButton.setAttribute("aria-pressed", String(page === "train"));
+  schedulerNavButton.setAttribute("aria-pressed", String(page === "scheduler"));
   updateBookmarkUrl();
 
   if (page === "live") {
@@ -1259,6 +1305,9 @@ function showPage(page, options = {}) {
     setStatus(`Showing selected station: ${state.selectedTrainStation.name}.`, "ready");
   } else if (page === "train") {
     setStatus("Search a location to load train stations within 1 km.", "waiting");
+  } else if (page === "scheduler") {
+    refreshSchedulerUi();
+    setStatus("Scheduler ready. Save reminder times for your selected bus stop or train station.", "ready");
   }
 }
 
@@ -1288,6 +1337,11 @@ function refreshActivePage() {
       );
       return true;
     }
+    return false;
+  }
+
+  if (state.activePage === "scheduler") {
+    refreshSchedulerUi();
     return false;
   }
 
@@ -1344,7 +1398,7 @@ function getSelectedTrainStation() {
 
 function restoreFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const page = ["live", "select", "train"].includes(params.get("page")) ? params.get("page") : "live";
+  const page = ["live", "select", "train", "scheduler"].includes(params.get("page")) ? params.get("page") : "live";
 
   busSelect.value = String(parseLiveCountParam(params.get("bus"), DEFAULT_LIVE_BUS_STOPS));
   trainSelect.value = String(parseLiveCountParam(params.get("train"), DEFAULT_LIVE_TRAIN_STATIONS));
@@ -1397,6 +1451,14 @@ function restoreFromUrl() {
       );
       return;
     }
+    return;
+  }
+
+  if (page === "scheduler") {
+    const scheduleId = params.get("schedule");
+    const matchingSchedule = state.savedSchedules.find((schedule) => schedule.id === scheduleId) || state.savedSchedules[0] || null;
+    state.schedulerDraft = matchingSchedule ? { ...matchingSchedule } : null;
+    if (state.schedulerDraft) syncSchedulerFormFromDraft();
     return;
   }
 
@@ -1456,6 +1518,11 @@ function updateBookmarkUrl() {
     if (station?.id) params.set("station", station.id);
     if (state.selectedTrainLine) params.set("line", state.selectedTrainLine);
     if (state.selectedTrainDestination) params.set("destination", state.selectedTrainDestination);
+  }
+
+  if (state.activePage === "scheduler") {
+    const scheduleId = state.schedulerDraft?.id || state.savedSchedules[0]?.id;
+    if (scheduleId) params.set("schedule", scheduleId);
   }
 
   const nextUrl = `${window.location.pathname}?${params.toString()}`;
@@ -1792,6 +1859,417 @@ function buildGoogleMapEmbedUrl(location, points) {
   const [firstDestination, ...rest] = destinations;
   const waypoints = rest.join("|");
   return `https://www.google.com/maps?output=embed&saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(firstDestination)}&waypoints=${encodeURIComponent(waypoints)}`;
+}
+
+function loadSavedSchedules() {
+  try {
+    const raw = window.localStorage.getItem(SCHEDULE_STORAGE_KEY);
+    state.savedSchedules = raw ? JSON.parse(raw) : [];
+  } catch (error) {
+    console.error("Could not load saved schedules", error);
+    state.savedSchedules = [];
+  }
+}
+
+function persistSavedSchedules() {
+  window.localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(state.savedSchedules));
+}
+
+function updateScheduleButtons() {
+  busScheduleButton.disabled = !state.selectedStop;
+  trainScheduleButton.disabled = !(state.selectedTrainStation && state.selectedTrainLine);
+}
+
+function openSchedulerFromSelection(type) {
+  const draft = buildScheduleDraft(type);
+  if (!draft) {
+    setStatus(`Choose a ${type === "bus" ? "bus stop" : "train station and line"} first.`, "error");
+    return;
+  }
+
+  state.schedulerDraft = draft;
+  syncSchedulerFormFromDraft();
+  showPage("scheduler");
+  renderSchedulerPreview();
+}
+
+function buildScheduleDraft(type) {
+  if (type === "bus") {
+    if (!state.selectedStop) return null;
+    const selectionKey = `bus:${getStopId(state.selectedStop)}:${state.selectedBusRoute || "*"}:${state.selectedBusDestination || "*"}`;
+    const existing = state.savedSchedules.find((schedule) => schedule.selectionKey === selectionKey);
+    return {
+      id: existing?.id || null,
+      type: "bus",
+      selectionKey,
+      title: cleanStationName(state.selectedStop.commonName || "Bus stop"),
+      subtitle: [
+        state.selectedBusRoute ? `Route ${state.selectedBusRoute}` : "All routes",
+        state.selectedBusDestination ? `to ${state.selectedBusDestination}` : "All destinations",
+      ].join(" · "),
+      stopId: getStopId(state.selectedStop),
+      route: state.selectedBusRoute || "",
+      destination: state.selectedBusDestination || "",
+      time: existing?.time || "08:00",
+      weekdays: existing?.weekdays || [1, 2, 3, 4, 5],
+      pageUrl: window.location.href,
+    };
+  }
+
+  if (!(state.selectedTrainStation && state.selectedTrainLine)) return null;
+  const selectionKey = `train:${state.selectedTrainStation.id}:${state.selectedTrainLine}:${state.selectedTrainDestination || "*"}`;
+  const existing = state.savedSchedules.find((schedule) => schedule.selectionKey === selectionKey);
+  const lineName = formatLineName(state.selectedTrainLine);
+  return {
+    id: existing?.id || null,
+    type: "train",
+    selectionKey,
+    title: state.selectedTrainStation.name,
+    subtitle: [
+      lineName,
+      state.selectedTrainDestination ? `to ${state.selectedTrainDestination}` : "All destinations",
+    ].join(" · "),
+    stationId: state.selectedTrainStation.id,
+    crs: state.selectedTrainStation.crs || "",
+    lineId: state.selectedTrainLine,
+    lineName,
+    destination: state.selectedTrainDestination || "",
+    time: existing?.time || "08:00",
+    weekdays: existing?.weekdays || [1, 2, 3, 4, 5],
+    pageUrl: window.location.href,
+  };
+}
+
+function syncSchedulerFormFromDraft() {
+  const draft = state.schedulerDraft;
+  schedulerTimeInput.value = draft?.time || "08:00";
+  const selectedDays = new Set(draft?.weekdays || [1, 2, 3, 4, 5]);
+  weekdayGrid.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.checked = selectedDays.has(Number.parseInt(input.value, 10));
+  });
+}
+
+function refreshSchedulerUi() {
+  if (!state.schedulerDraft && state.savedSchedules.length) {
+    state.schedulerDraft = { ...state.savedSchedules[0] };
+    syncSchedulerFormFromDraft();
+  }
+
+  updateScheduleButtons();
+  const draft = state.schedulerDraft;
+  schedulerDraftType.textContent = draft ? (draft.type === "bus" ? "Bus reminder" : "Train reminder") : "Choose bus or train";
+  schedulerDraftTitle.textContent = draft
+    ? draft.title
+    : "Open a bus stop or train station, then tap Schedule.";
+  schedulerDraftSubtitle.textContent = draft
+    ? draft.subtitle
+    : "The scheduler keeps the selected stop, route, line, and destination.";
+
+  const standalone = window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  notificationSupportText.textContent = standalone
+    ? "This web app is running like an installed app. You can enable notifications here."
+    : "Add this app to your Home Screen on iPhone or iPad for the best Apple Web App notification support.";
+  notificationPermissionText.textContent = getNotificationPermissionMessage();
+  enableNotificationsButton.disabled = !("Notification" in window);
+  testNotificationButton.disabled = !("Notification" in window) || Notification.permission !== "granted";
+  saveScheduleButton.disabled = !draft;
+
+  renderSchedulerPreview();
+  renderSavedSchedules();
+}
+
+function getNotificationPermissionMessage() {
+  if (!("Notification" in window)) return "This browser does not support web notifications.";
+  if (Notification.permission === "granted") return "Notifications are enabled for this web app.";
+  if (Notification.permission === "denied") return "Notifications are blocked. Change the browser setting to allow them again.";
+  return "Notification permission not requested yet.";
+}
+
+function getSelectedWeekdaysFromForm() {
+  return [...weekdayGrid.querySelectorAll('input[type="checkbox"]:checked')]
+    .map((input) => Number.parseInt(input.value, 10))
+    .sort((a, b) => {
+      const indexA = SCHEDULE_WEEKDAYS.findIndex((day) => day.value === a);
+      const indexB = SCHEDULE_WEEKDAYS.findIndex((day) => day.value === b);
+      return indexA - indexB;
+    });
+}
+
+function saveCurrentSchedule() {
+  if (!state.schedulerDraft) {
+    setStatus("Open a bus stop or train station first, then tap Schedule.", "error");
+    return;
+  }
+
+  const weekdays = getSelectedWeekdaysFromForm();
+  if (!weekdays.length) {
+    setStatus("Choose at least 1 weekday for the reminder.", "error");
+    return;
+  }
+
+  const time = schedulerTimeInput.value || "08:00";
+  const schedule = {
+    ...state.schedulerDraft,
+    id: state.schedulerDraft.id || createScheduleId(),
+    time,
+    weekdays,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const existingIndex = state.savedSchedules.findIndex((item) => item.id === schedule.id || item.selectionKey === schedule.selectionKey);
+  if (existingIndex >= 0) {
+    state.savedSchedules.splice(existingIndex, 1, schedule);
+  } else {
+    state.savedSchedules.unshift(schedule);
+  }
+
+  state.schedulerDraft = schedule;
+  persistSavedSchedules();
+  scheduleSavedNotifications();
+  refreshSchedulerUi();
+  updateBookmarkUrl();
+  setStatus(`Saved scheduler reminder for ${schedule.title}.`, "ready");
+}
+
+function handleSavedSchedulesClick(event) {
+  const actionButton = event.target.closest("[data-schedule-action]");
+  if (!actionButton) return;
+
+  const { scheduleAction, scheduleId } = actionButton.dataset;
+  const schedule = state.savedSchedules.find((item) => item.id === scheduleId);
+  if (!schedule) return;
+
+  if (scheduleAction === "edit") {
+    state.schedulerDraft = { ...schedule };
+    syncSchedulerFormFromDraft();
+    refreshSchedulerUi();
+    showPage("scheduler");
+    return;
+  }
+
+  if (scheduleAction === "delete") {
+    state.savedSchedules = state.savedSchedules.filter((item) => item.id !== scheduleId);
+    if (state.schedulerDraft?.id === scheduleId) {
+      state.schedulerDraft = state.savedSchedules[0] ? { ...state.savedSchedules[0] } : null;
+      syncSchedulerFormFromDraft();
+    }
+    persistSavedSchedules();
+    scheduleSavedNotifications();
+    refreshSchedulerUi();
+    setStatus(`Removed scheduler reminder for ${schedule.title}.`, "ready");
+  }
+}
+
+function renderSavedSchedules() {
+  if (!state.savedSchedules.length) {
+    savedSchedulesList.innerHTML = `<div class="empty-state">No saved schedules yet. Open a bus stop or train station and tap Schedule.</div>`;
+    return;
+  }
+
+  savedSchedulesList.innerHTML = state.savedSchedules
+    .map((schedule) => {
+      const nextTimes = getNextScheduleTimes(schedule, 3)
+        .map((date) => formatScheduleTime(date))
+        .join(" · ");
+      return `
+        <article class="saved-schedule-card">
+          <div class="saved-schedule-copy">
+            <p class="saved-schedule-type">${escapeHtml(schedule.type === "bus" ? "Bus reminder" : "Train reminder")}</p>
+            <h3>${escapeHtml(schedule.title)}</h3>
+            <p>${escapeHtml(schedule.subtitle)}</p>
+            <p class="saved-schedule-next">${escapeHtml(nextTimes || "No upcoming times")}</p>
+          </div>
+          <div class="saved-schedule-actions">
+            <button class="secondary-button inline-action" type="button" data-schedule-action="edit" data-schedule-id="${escapeHtml(schedule.id)}">Edit</button>
+            <button class="secondary-button inline-action" type="button" data-schedule-action="delete" data-schedule-id="${escapeHtml(schedule.id)}">Delete</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderSchedulerPreview() {
+  const draft = state.schedulerDraft;
+  if (!draft) {
+    schedulerPreviewList.innerHTML = "<li>No schedule selected yet.</li>";
+    return;
+  }
+
+  const previewSchedule = {
+    ...draft,
+    time: schedulerTimeInput.value || draft.time || "08:00",
+    weekdays: getSelectedWeekdaysFromForm(),
+  };
+
+  if (!previewSchedule.weekdays.length) {
+    schedulerPreviewList.innerHTML = "<li>Choose at least 1 weekday to preview reminder times.</li>";
+    return;
+  }
+
+  const nextTimes = getNextScheduleTimes(previewSchedule, 3);
+  schedulerPreviewList.innerHTML = nextTimes.map((date) => `<li>${escapeHtml(formatScheduleTime(date))}</li>`).join("");
+}
+
+function getNextScheduleTimes(schedule, count, fromDate = new Date()) {
+  const [hourText, minuteText] = (schedule.time || "08:00").split(":");
+  const hour = Number.parseInt(hourText, 10);
+  const minute = Number.parseInt(minuteText, 10);
+  const weekdays = new Set(schedule.weekdays || []);
+  const results = [];
+
+  for (let offset = 0; offset < 21 && results.length < count; offset += 1) {
+    const candidate = new Date(fromDate);
+    candidate.setSeconds(0, 0);
+    candidate.setDate(fromDate.getDate() + offset);
+    candidate.setHours(hour, minute, 0, 0);
+    if (!weekdays.has(candidate.getDay())) continue;
+    if (candidate <= fromDate) continue;
+    results.push(candidate);
+  }
+
+  return results;
+}
+
+function formatScheduleTime(date) {
+  return date.toLocaleString([], {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function createScheduleId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `schedule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function requestNotificationPermission() {
+  if (!("Notification" in window)) {
+    setStatus("This browser does not support web notifications.", "error");
+    refreshSchedulerUi();
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+  refreshSchedulerUi();
+  if (permission === "granted") {
+    setStatus("Notifications enabled for this web app.", "ready");
+    return;
+  }
+
+  setStatus("Notification permission was not granted.", "error");
+}
+
+async function sendTestNotification() {
+  if (!("Notification" in window)) {
+    setStatus("This browser does not support web notifications.", "error");
+    return;
+  }
+
+  if (Notification.permission !== "granted") {
+    await requestNotificationPermission();
+    if (Notification.permission !== "granted") return;
+  }
+
+  const title = state.schedulerDraft?.title || "Live TfL Arrivals";
+  await showAppNotification(title, "Test notification sent from the scheduler.", state.schedulerDraft?.pageUrl || window.location.href);
+  setStatus("Test notification sent.", "ready");
+}
+
+async function showAppNotification(title, body, url) {
+  if ("serviceWorker" in navigator) {
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification(title, {
+      body,
+      icon: "./icon.svg",
+      badge: "./icon-maskable.svg",
+      tag: "live-tfl-arrivals-schedule",
+      data: { url },
+    });
+    return;
+  }
+
+  new Notification(title, { body });
+}
+
+function scheduleSavedNotifications() {
+  if (state.schedulerTimer) {
+    window.clearTimeout(state.schedulerTimer);
+    state.schedulerTimer = null;
+  }
+
+  const nextDue = state.savedSchedules
+    .map((schedule) => ({
+      schedule,
+      nextAt: getNextScheduleTimes(schedule, 1)[0] || null,
+    }))
+    .filter((item) => item.nextAt)
+    .sort((a, b) => a.nextAt - b.nextAt)[0];
+
+  if (!nextDue) return;
+
+  const delay = Math.max(1000, nextDue.nextAt.getTime() - Date.now());
+  state.schedulerTimeoutAt = nextDue.nextAt.getTime();
+  state.schedulerTimer = window.setTimeout(async () => {
+    await runDueSchedules();
+    scheduleSavedNotifications();
+  }, delay);
+}
+
+async function runDueSchedules() {
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - 60 * 1000);
+  const dueSchedules = state.savedSchedules.filter((schedule) => {
+    const dueAt = getNextScheduleTimes(schedule, 1, windowStart)[0];
+    return dueAt && dueAt.getTime() <= now.getTime();
+  });
+
+  for (const schedule of dueSchedules) {
+    await sendScheduleNotification(schedule);
+  }
+}
+
+async function sendScheduleNotification(schedule) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+  try {
+    const lines = await fetchScheduleNotificationLines(schedule);
+    const body = lines.length
+      ? lines.join(" | ")
+      : `No live ${schedule.type === "bus" ? "bus" : "train"} times are available right now.`;
+    await showAppNotification(schedule.title, body, schedule.pageUrl || window.location.href);
+  } catch (error) {
+    console.error("Could not send schedule notification", error);
+  }
+}
+
+async function fetchScheduleNotificationLines(schedule) {
+  if (schedule.type === "bus") {
+    const arrivals = filterBusArrivals(
+      await getArrivals(schedule.stopId, "bus", SELECTED_STOP_FILTER_CANDIDATES),
+      schedule.route || "",
+      schedule.destination || "",
+    ).slice(0, 3);
+    return arrivals.map((arrival) => `${arrival.lineName || arrival.lineId} ${cleanStationName(arrival.destinationName || "")} ${formatEta(arrival.timeToStation)}`);
+  }
+
+  const station = {
+    id: schedule.stationId,
+    crs: schedule.crs || "",
+    name: schedule.title,
+  };
+  const allArrivals = await getTrainArrivalsForLine(station, schedule.lineId);
+  const arrivals = (schedule.lineId === "national-rail" && schedule.crs
+    ? allArrivals
+    : filterArrivalsByLine(allArrivals, schedule.lineId)
+  )
+    .filter((arrival) => !schedule.destination || cleanStationName(arrival.destinationName || "") === schedule.destination)
+    .slice(0, 3);
+
+  return arrivals.map((arrival) => `${arrival.lineName || schedule.lineName} ${cleanStationName(arrival.destinationName || "")} ${formatEta(arrival.timeToStation)}`);
 }
 
 function startAutoRefresh() {

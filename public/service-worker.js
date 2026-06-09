@@ -1,9 +1,9 @@
-const STATIC_CACHE = "live-tfl-arrivals-static-v1";
+const STATIC_CACHE = "live-tfl-arrivals-static-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/styles.css?v=2026-06-08-pwa",
-  "/app.js?v=2026-06-08-pwa",
+  "/styles.css?v=2026-06-09-scheduler",
+  "/app.js?v=2026-06-09-scheduler",
   "/manifest.webmanifest?v=2026-06-08-pwa",
   "/icon.svg?v=2026-06-08-pwa",
   "/icon-maskable.svg?v=2026-06-08-pwa",
@@ -58,4 +58,10 @@ self.addEventListener("fetch", (event) => {
       });
     }),
   );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || "/";
+  event.waitUntil(clients.openWindow(targetUrl));
 });

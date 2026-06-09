@@ -12,7 +12,7 @@
     <link rel="manifest" href="manifest.webmanifest?v=2026-06-08-pwa" />
     <link rel="icon" href="icon.svg?v=2026-06-08-pwa" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg?v=2026-06-08-pwa" />
-    <link rel="stylesheet" href="styles.css?v=2026-06-09-nearbyselectfix2" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-09-scheduler" />
   </head>
   <body>
     <main class="app-shell">
@@ -34,6 +34,7 @@
         <button class="nav-tab active" id="liveNavButton" type="button" aria-pressed="true">Live</button>
         <button class="nav-tab" id="selectNavButton" type="button" aria-pressed="false">Select bus stop</button>
         <button class="nav-tab" id="selectTrainNavButton" type="button" aria-pressed="false">Select train station</button>
+        <button class="nav-tab" id="schedulerNavButton" type="button" aria-pressed="false">Scheduler</button>
       </nav>
 
       <section class="status-panel" aria-live="polite">
@@ -185,8 +186,11 @@
 
         <section class="result-section" aria-label="Selected bus stop arrivals">
           <div class="section-heading">
-            <h2 id="selectedStopTitle">Select a bus stop</h2>
-            <p>Next 5 buses</p>
+            <div>
+              <h2 id="selectedStopTitle">Select a bus stop</h2>
+              <p>Next 5 buses</p>
+            </div>
+            <button class="secondary-button inline-action" id="busScheduleButton" type="button" disabled>Schedule</button>
           </div>
           <div class="selected-stop-panel" id="selectedStopPanel"></div>
         </section>
@@ -239,11 +243,98 @@
 
         <section class="result-section" aria-label="Selected train station arrivals">
           <div class="section-heading">
-            <h2 id="selectedTrainTitle">Select a train station</h2>
-            <p id="selectedTrainSubtitle">Next 5 arrivals</p>
+            <div>
+              <h2 id="selectedTrainTitle">Select a train station</h2>
+              <p id="selectedTrainSubtitle">Next 5 arrivals</p>
+            </div>
+            <button class="secondary-button inline-action" id="trainScheduleButton" type="button" disabled>Schedule</button>
           </div>
           <div class="line-status-panel" id="lineStatusPanel"></div>
           <div class="selected-train-panel" id="selectedTrainPanel"></div>
+        </section>
+      </div>
+
+      <div id="schedulerPage" hidden>
+        <section class="result-section" aria-label="Scheduler setup">
+          <div class="section-heading">
+            <div>
+              <h2>Scheduler</h2>
+              <p>Save a bus stop or train station reminder for selected weekdays and time.</p>
+            </div>
+          </div>
+          <div class="scheduler-grid">
+            <section class="scheduler-card scheduler-draft" aria-label="Current reminder selection">
+              <div class="scheduler-card-header">
+                <h3>Current selection</h3>
+                <span class="scheduler-badge" id="schedulerDraftType">Choose bus or train</span>
+              </div>
+              <p class="scheduler-title" id="schedulerDraftTitle">Open a bus stop or train station, then tap Schedule.</p>
+              <p class="scheduler-subtitle" id="schedulerDraftSubtitle">The scheduler keeps the selected stop, route, line, and destination.</p>
+            </section>
+
+            <section class="scheduler-card" aria-label="Notification permission">
+              <div class="scheduler-card-header">
+                <h3>Notifications</h3>
+              </div>
+              <p class="scheduler-note" id="notificationSupportText">
+                Add this app to your Home Screen on iPhone or iPad for Apple Web App notifications.
+              </p>
+              <div class="scheduler-actions">
+                <button class="primary-button" id="enableNotificationsButton" type="button">Enable notifications</button>
+                <button class="secondary-button" id="testNotificationButton" type="button">Send test</button>
+              </div>
+              <p class="scheduler-help" id="notificationPermissionText">Notification permission not requested yet.</p>
+            </section>
+
+            <section class="scheduler-card scheduler-form-card" aria-label="Schedule settings">
+              <div class="scheduler-card-header">
+                <h3>Reminder time</h3>
+              </div>
+              <div class="scheduler-form">
+                <label>
+                  Time
+                  <input id="schedulerTimeInput" type="time" value="08:00" />
+                </label>
+                <fieldset class="weekday-fieldset">
+                  <legend>Weekdays</legend>
+                  <div class="weekday-grid" id="weekdayGrid">
+                    <label class="weekday-pill"><input type="checkbox" value="1" checked /><span>Mon</span></label>
+                    <label class="weekday-pill"><input type="checkbox" value="2" checked /><span>Tue</span></label>
+                    <label class="weekday-pill"><input type="checkbox" value="3" checked /><span>Wed</span></label>
+                    <label class="weekday-pill"><input type="checkbox" value="4" checked /><span>Thu</span></label>
+                    <label class="weekday-pill"><input type="checkbox" value="5" checked /><span>Fri</span></label>
+                    <label class="weekday-pill"><input type="checkbox" value="6" /><span>Sat</span></label>
+                    <label class="weekday-pill"><input type="checkbox" value="0" /><span>Sun</span></label>
+                  </div>
+                </fieldset>
+                <div class="scheduler-actions">
+                  <button class="primary-button" id="saveScheduleButton" type="button">Save schedule</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="scheduler-card" aria-label="Next reminder times">
+              <div class="scheduler-card-header">
+                <h3>Next 3 reminder times</h3>
+              </div>
+              <ol class="scheduler-preview-list" id="schedulerPreviewList">
+                <li>No schedule selected yet.</li>
+              </ol>
+              <p class="scheduler-help">
+                This first version can show notifications while the web app is active. Full background scheduled delivery on Apple devices needs server Web Push.
+              </p>
+            </section>
+          </div>
+        </section>
+
+        <section class="result-section" aria-label="Saved schedules">
+          <div class="section-heading">
+            <div>
+              <h2>Saved schedules</h2>
+              <p>Your reminders stay in this browser on this device.</p>
+            </div>
+          </div>
+          <div class="scheduler-saved-list" id="savedSchedulesList"></div>
         </section>
       </div>
     </main>
@@ -261,6 +352,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-09-nearbyselectfix2"></script>
+    <script src="app.js?v=2026-06-09-scheduler"></script>
   </body>
 </html>
