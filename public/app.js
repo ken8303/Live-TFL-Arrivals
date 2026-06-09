@@ -447,12 +447,13 @@ async function loadNearbyBusStopsForSelection(location, preferredStopId = state.
     populateBusStopSelect(stops);
     selectedStopSelect.disabled = false;
     const preferredStop = preferredStopId ? stops.find((stop) => getStopId(stop) === preferredStopId) : null;
+    const selectedStop = preferredStop || stops[0] || null;
     state.savedStopId = null;
-    if (preferredStop) {
-      selectedStopSelect.value = getStopId(preferredStop);
+    if (selectedStop) {
+      selectedStopSelect.value = getStopId(selectedStop);
       shouldScheduleRefresh = false;
       state.loading = false;
-      await loadSelectedStopArrivals(preferredStop);
+      await loadSelectedStopArrivals(selectedStop);
     } else {
       selectedStopPanel.innerHTML = `<div class="empty-state">Found ${stops.length} bus stops within 1 km. Choose one to see live arrivals.</div>`;
       setStatus(`Found ${stops.length} bus stops within 1 km of ${location.label || "this location"}.`, "ready");
@@ -1306,6 +1307,15 @@ function populateTrainStations() {
     ? stations.map((station, index) => `<option value="${index}">${escapeHtml(station.name)}</option>`).join("")
     : `<option value="">Choose a nearby station first</option>`;
   trainStationSelect.disabled = stations.length === 0;
+}
+
+function populateBusStopSelect(stops) {
+  selectedStopSelect.innerHTML = stops.length
+    ? stops
+        .map((stop) => `<option value="${escapeHtml(getStopId(stop))}">${escapeHtml(formatStopOption(stop))}</option>`)
+        .join("")
+    : `<option value="">Choose a nearby stop first</option>`;
+  selectedStopSelect.disabled = stops.length === 0;
 }
 
 function populateDelaySelects() {
