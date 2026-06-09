@@ -432,6 +432,7 @@ async function loadNearbyBusStopsForSelection(location, preferredStopId = state.
   lastUpdated.textContent = "";
   updateBookmarkUrl();
 
+  let shouldScheduleRefresh = true;
   try {
     const stops = await findNearbyBusStopsWithin1km(location);
     state.selectedAreaStops = stops;
@@ -449,6 +450,8 @@ async function loadNearbyBusStopsForSelection(location, preferredStopId = state.
     state.savedStopId = null;
     if (preferredStop) {
       selectedStopSelect.value = getStopId(preferredStop);
+      shouldScheduleRefresh = false;
+      state.loading = false;
       await loadSelectedStopArrivals(preferredStop);
     } else {
       selectedStopPanel.innerHTML = `<div class="empty-state">Found ${stops.length} bus stops within 1 km. Choose one to see live arrivals.</div>`;
@@ -466,7 +469,7 @@ async function loadNearbyBusStopsForSelection(location, preferredStopId = state.
     setStatus("Bus stops could not be loaded. Please try again.", "error");
   } finally {
     state.loading = false;
-    scheduleNextRefresh();
+    if (shouldScheduleRefresh) scheduleNextRefresh();
   }
 }
 
@@ -492,6 +495,7 @@ async function loadNearbyTrainStationsForSelection(location, preferredStationId 
   lastUpdated.textContent = "";
   updateBookmarkUrl();
 
+  let shouldScheduleRefresh = true;
   try {
     const stations = await findNearbyTrainStationsWithin1km(location);
     state.availableTrainStations = stations;
@@ -504,6 +508,8 @@ async function loadNearbyTrainStationsForSelection(location, preferredStationId 
     const preferredIndex = preferredStationId ? stations.findIndex((station) => station.id === preferredStationId) : -1;
     if (preferredIndex >= 0) {
       trainStationSelect.value = String(preferredIndex);
+      shouldScheduleRefresh = false;
+      state.loading = false;
       await loadSelectedTrainStation(preferredLine);
     } else {
       selectedTrainPanel.innerHTML = `<div class="empty-state">Found ${stations.length} train stations within 1 km. Choose one to see live arrivals.</div>`;
@@ -520,7 +526,7 @@ async function loadNearbyTrainStationsForSelection(location, preferredStationId 
     setStatus("Train stations could not be loaded. Please try again.", "error");
   } finally {
     state.loading = false;
-    scheduleNextRefresh();
+    if (shouldScheduleRefresh) scheduleNextRefresh();
   }
 }
 
@@ -925,23 +931,25 @@ async function findFirstStopWithArrivals(stops) {
 }
 
 async function findClosestStations(location, targetCount) {
-  return findClosestPlaces({
+  const stops = await findClosestPlaces({
     ...location,
     stopTypes: "NaptanMetroStation,NaptanRailStation",
     modes: "tube,dlr,overground,elizabeth-line,national-rail",
     targetCount,
     candidateCount: CANDIDATE_STATIONS,
   });
+  return normalizeNearbyTrainStations(stops).slice(0, targetCount);
 }
 
 async function findNearbyTrainStationsWithin1km(location) {
-  return findStopsWithinRadius({
+  const stops = await findStopsWithinRadius({
     ...location,
     stopTypes: "NaptanMetroStation,NaptanRailStation",
     modes: "tube,dlr,overground,elizabeth-line,national-rail,tram",
     radius: 1000,
     limit: 40,
   });
+  return normalizeNearbyTrainStations(stops);
 }
 
 async function findStopsWithinRadius({ lat, lon, stopTypes, modes, radius, limit }) {
@@ -1293,10 +1301,11 @@ function refreshActivePage() {
 function populateAreas() {}
 
 function populateTrainStations() {
-  const stations = state.availableTrainStations.length ? state.availableTrainStations : TRAIN_STATIONS;
-  trainStationSelect.innerHTML = stations.map(
-    (station, index) => `<option value="${index}">${escapeHtml(station.name)}</option>`,
-  ).join("");
+  const stations = state.availableTrainStations;
+  trainStationSelect.innerHTML = stations.length
+    ? stations.map((station, index) => `<option value="${index}">${escapeHtml(station.name)}</option>`).join("")
+    : `<option value="">Choose a nearby station first</option>`;
+  trainStationSelect.disabled = stations.length === 0;
 }
 
 function populateDelaySelects() {
@@ -1319,8 +1328,8 @@ function syncRefreshSelects() {
 }
 
 function getSelectedTrainStation() {
-  const stations = state.availableTrainStations.length ? state.availableTrainStations : TRAIN_STATIONS;
-  return stations[Number.parseInt(trainStationSelect.value, 10)] || stations[0] || TRAIN_STATIONS[0];
+  const stations = state.availableTrainStations;
+  return stations[Number.parseInt(trainStationSelect.value, 10)] || stations[0] || null;
 }
 
 function restoreFromUrl() {
@@ -1448,7 +1457,7 @@ function updateBookmarkUrl() {
 function getTrainStationIndex(value) {
   if (!value) return -1;
   const asNumber = Number.parseInt(value, 10);
-  const stations = state.availableTrainStations.length ? state.availableTrainStations : TRAIN_STATIONS;
+  const stations = state.availableTrainStations;
   if (Number.isInteger(asNumber) && stations[asNumber]) return asNumber;
   return stations.findIndex((station) => station.id === value);
 }
@@ -1459,6 +1468,45 @@ function trimCoordinate(value) {
 
 function getStopId(stop) {
   return stop.id || stop.naptanId;
+}
+
+function normalizeNearbyTrainStations(stops) {
+  const stationsById = new Map();
+
+  stops.forEach((stop) => {
+    const stationId = stop.stationNaptan || stop.id || stop.naptanId;
+    if (!stationId) return;
+
+    const existing = stationsById.get(stationId);
+    const isTopLevelStop = stop.id === stationId || stop.naptanId === stationId;
+    const normalized = {
+      ...stop,
+      id: stationId,
+      naptanId: stationId,
+      name: cleanStationName(stop.commonName || stop.name || "Unnamed station"),
+      commonName: cleanStationName(stop.commonName || stop.name || "Unnamed station"),
+      lat: Number.isFinite(stop.lat) ? stop.lat : existing?.lat ?? null,
+      lon: Number.isFinite(stop.lon) ? stop.lon : existing?.lon ?? null,
+      lines: (stop.lines || []).filter((line) => STATION_MODES.has(line.id)),
+    };
+
+    if (!existing || isTopLevelStop) {
+      stationsById.set(stationId, normalized);
+      return;
+    }
+
+    if ((normalized.distance ?? Number.MAX_VALUE) < (existing.distance ?? Number.MAX_VALUE)) {
+      stationsById.set(stationId, {
+        ...existing,
+        ...normalized,
+        lines: normalized.lines.length ? normalized.lines : existing.lines || [],
+      });
+    } else if (!existing.lines?.length && normalized.lines.length) {
+      existing.lines = normalized.lines;
+    }
+  });
+
+  return [...stationsById.values()].sort((a, b) => (a.distance ?? Number.MAX_VALUE) - (b.distance ?? Number.MAX_VALUE));
 }
 
 function formatStopOption(stop) {
