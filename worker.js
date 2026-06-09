@@ -1,7 +1,9 @@
 import { onRequestGet as getNationalRailArrivals } from "./functions/api/national-rail/arrivals.js";
 import { onRequestGet as getNationalRailConfig } from "./functions/api/national-rail/config.js";
+import { onRequestGet as getBusStopCatalog } from "./functions/api/catalog/bus-stops.js";
+import { onRequestGet as getTrainStationCatalog } from "./functions/api/catalog/train-stations.js";
 
-const APP_VERSION = "2026-06-09-nearbyselect";
+const APP_VERSION = "2026-06-09-dailycatalogcache";
 
 export default {
   async fetch(request, env) {
@@ -13,6 +15,14 @@ export default {
 
     if (url.pathname === "/api/national-rail/config") {
       return withVersionHeader(await getNationalRailConfig({ request, env }));
+    }
+
+    if (url.pathname === "/api/catalog/bus-stops") {
+      return withVersionHeader(await getBusStopCatalog({ request, env }));
+    }
+
+    if (url.pathname === "/api/catalog/train-stations") {
+      return withVersionHeader(await getTrainStationCatalog({ request, env }));
     }
 
     if (url.pathname === "/api/version") {
