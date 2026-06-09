@@ -17,6 +17,7 @@ const DEFAULT_DELAY_MINUTES = 10;
 const MIN_DELAY_MINUTES = 0;
 const MAX_DELAY_MINUTES = 60;
 const SCHEDULE_STORAGE_KEY = "live-tfl-arrivals-schedules";
+const READING_BUS_PROVIDER = "reading-buses";
 const SCHEDULE_WEEKDAYS = [
   { value: 1, label: "Mon", longLabel: "Monday" },
   { value: 2, label: "Tue", longLabel: "Tuesday" },
@@ -123,6 +124,8 @@ const state = {
   savedSchedules: [],
   schedulerTimer: null,
   schedulerTimeoutAt: null,
+  readingBusCatalog: null,
+  readingBusCatalogLoaded: false,
 };
 
 const livePage = document.querySelector("#livePage");
@@ -414,7 +417,7 @@ async function loadNearby(location) {
     const candidatesWithArrivals = await Promise.all(
       stops.map(async (stop) => ({
         stop,
-        arrivals: await getArrivals(stop.id || stop.naptanId, "bus"),
+        arrivals: await getBusArrivals(stop),
       })),
     );
     const liveStops = candidatesWithArrivals.filter(({ arrivals }) => arrivals.length > 0);
@@ -592,7 +595,7 @@ async function loadSelectedStopArrivals(stop, preferredRoute = state.selectedBus
   lastUpdated.textContent = "";
 
   try {
-    const arrivals = await getArrivals(getStopId(stop), "bus", SELECTED_STOP_FILTER_CANDIDATES);
+    const arrivals = await getBusArrivals(stop, SELECTED_STOP_FILTER_CANDIDATES);
     state.selectedStopArrivals = arrivals;
     syncBusFilters();
     renderSelectedStopWithFilters();
@@ -792,23 +795,35 @@ function renderSelectedTrainWithFilters(lineStatus = null) {
 }
 
 async function findClosestBusStops(location, targetCount) {
-  return findClosestPlaces({
-    ...location,
-    stopTypes: "NaptanPublicBusCoachTram",
-    modes: "bus",
-    targetCount,
-    candidateCount: CANDIDATE_BUS_STOPS,
-  });
+  const [tflStops, readingStops] = await Promise.all([
+    findClosestPlaces({
+      ...location,
+      stopTypes: "NaptanPublicBusCoachTram",
+      modes: "bus",
+      targetCount,
+      candidateCount: CANDIDATE_BUS_STOPS,
+    }),
+    findNearbyReadingBusStops(location, 1500, CANDIDATE_BUS_STOPS),
+  ]);
+  return [...tflStops, ...readingStops]
+    .sort((a, b) => (a.distance ?? Number.MAX_VALUE) - (b.distance ?? Number.MAX_VALUE))
+    .slice(0, CANDIDATE_BUS_STOPS);
 }
 
 async function findNearbyBusStopsWithin1km(location) {
-  return findStopsWithinRadius({
-    ...location,
-    stopTypes: "NaptanPublicBusCoachTram",
-    modes: "bus",
-    radius: 1000,
-    limit: 60,
-  });
+  const [tflStops, readingStops] = await Promise.all([
+    findStopsWithinRadius({
+      ...location,
+      stopTypes: "NaptanPublicBusCoachTram",
+      modes: "bus",
+      radius: 1000,
+      limit: 60,
+    }),
+    findNearbyReadingBusStops(location, 1000, 60),
+  ]);
+  return [...tflStops, ...readingStops]
+    .sort((a, b) => (a.distance ?? Number.MAX_VALUE) - (b.distance ?? Number.MAX_VALUE))
+    .slice(0, 60);
 }
 
 async function findBusStopsForArea(location) {
@@ -829,7 +844,7 @@ async function searchBusStops(query) {
   url.searchParams.set("modes", "bus");
   const data = await fetchJson(url);
 
-  return (data.matches || [])
+  const tflMatches = (data.matches || [])
     .filter((match) => (match.modes || []).includes("bus") && match.id && !match.id.startsWith("HUB"))
     .map((match) => ({
       id: match.id,
@@ -849,8 +864,12 @@ async function searchBusStops(query) {
       lat: match.lat,
       lon: match.lon,
       lines: [],
+      provider: "tfl",
     }))
     .slice(0, SELECTED_STOP_CANDIDATES);
+
+  if (tflMatches.length) return tflMatches;
+  return searchReadingBusStops(query);
 }
 
 async function searchTrainStations(query) {
@@ -959,18 +978,28 @@ async function lookupLocation(query) {
     };
   }
 
+  const readingStops = await searchReadingBusStops(query);
+  const firstReadingStop = readingStops[0];
+  if (firstReadingStop && Number.isFinite(firstReadingStop.lat) && Number.isFinite(firstReadingStop.lon)) {
+    return {
+      label: firstReadingStop.commonName || query,
+      lat: firstReadingStop.lat,
+      lon: firstReadingStop.lon,
+    };
+  }
+
   throw new Error("Location not found");
 }
 
 async function findFirstStopWithArrivals(stops) {
   for (const stop of stops.slice(0, 10)) {
-    const arrivals = await getArrivals(getStopId(stop), "bus", SELECTED_STOP_ARRIVALS);
+    const arrivals = await getBusArrivals(stop, SELECTED_STOP_ARRIVALS);
     if (arrivals.length > 0) return { stop, arrivals };
   }
 
   return {
     stop: stops[0],
-    arrivals: await getArrivals(getStopId(stops[0]), "bus", SELECTED_STOP_ARRIVALS),
+    arrivals: await getBusArrivals(stops[0], SELECTED_STOP_ARRIVALS),
   };
 }
 
@@ -1045,6 +1074,19 @@ async function getArrivals(stopId, type, limit = MAX_ARRIVALS) {
     .slice(0, limit);
 }
 
+async function getBusArrivals(stop, limit = MAX_ARRIVALS) {
+  if (stop?.provider === READING_BUS_PROVIDER) {
+    const data = await fetchJson(`/api/reading-buses/predictions?location=${encodeURIComponent(getStopId(stop))}`);
+    return (data.arrivals || [])
+      .filter((arrival) => arrival.modeName === "bus")
+      .sort((a, b) => a.timeToStation - b.timeToStation)
+      .filter((arrival) => isAfterDelay(arrival.timeToStation))
+      .slice(0, limit);
+  }
+
+  return getArrivals(getStopId(stop), "bus", limit);
+}
+
 async function getStationTrainArrivals(stationId) {
   const arrivals = await fetchJson(`${API_BASE}/StopPoint/${encodeURIComponent(stationId)}/Arrivals`);
 
@@ -1091,6 +1133,56 @@ async function fetchJson(url) {
   }
 
   return response.json();
+}
+
+async function getReadingBusCatalog() {
+  if (state.readingBusCatalogLoaded) return state.readingBusCatalog || [];
+  try {
+    const data = await fetchJson("/api/catalog/bus-stops?provider=reading-buses");
+    state.readingBusCatalog = data.items || [];
+  } catch (error) {
+    console.warn("Reading bus catalog unavailable", error);
+    state.readingBusCatalog = [];
+  }
+  state.readingBusCatalogLoaded = true;
+  return state.readingBusCatalog;
+}
+
+async function searchReadingBusStops(query) {
+  const lowered = query.trim().toLowerCase();
+  if (!lowered) return [];
+  const stops = await getReadingBusCatalog();
+  return stops
+    .filter((stop) =>
+      [stop.commonName, stop.indicator, stop.stopLetter, getStopId(stop)]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(lowered)),
+    )
+    .slice(0, SELECTED_STOP_CANDIDATES);
+}
+
+async function findNearbyReadingBusStops(location, radius, limit) {
+  const stops = await getReadingBusCatalog();
+  return stops
+    .map((stop) => ({
+      ...stop,
+      distance: calculateDistanceMeters(location.lat, location.lon, stop.lat, stop.lon),
+    }))
+    .filter((stop) => Number.isFinite(stop.distance) && stop.distance <= radius)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit);
+}
+
+function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const earthRadius = 6371000;
+  const dLat = toRadians(Number(lat2) - Number(lat1));
+  const dLon = toRadians(Number(lon2) - Number(lon1));
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRadians(Number(lat1))) * Math.cos(toRadians(Number(lat2))) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadius * c;
 }
 
 function renderStops(stopsWithArrivals) {
@@ -1908,6 +2000,7 @@ function buildScheduleDraft(type) {
         state.selectedBusDestination ? `to ${state.selectedBusDestination}` : "All destinations",
       ].join(" · "),
       stopId: getStopId(state.selectedStop),
+      provider: state.selectedStop.provider || "tfl",
       route: state.selectedBusRoute || "",
       destination: state.selectedBusDestination || "",
       time: existing?.time || "08:00",
@@ -2249,7 +2342,14 @@ async function sendScheduleNotification(schedule) {
 async function fetchScheduleNotificationLines(schedule) {
   if (schedule.type === "bus") {
     const arrivals = filterBusArrivals(
-      await getArrivals(schedule.stopId, "bus", SELECTED_STOP_FILTER_CANDIDATES),
+      await getBusArrivals(
+        {
+          id: schedule.stopId,
+          naptanId: schedule.stopId,
+          provider: schedule.provider || "tfl",
+        },
+        SELECTED_STOP_FILTER_CANDIDATES,
+      ),
       schedule.route || "",
       schedule.destination || "",
     ).slice(0, 3);

@@ -60,6 +60,7 @@ For live arrivals, add:
 
 ```text
 NATIONAL_RAIL_DARWIN_TOKEN
+READING_OPEN_DATA_API_TOKEN
 ```
 
 This must be the OpenLDBWS / Darwin live departure board token, usually shaped like:

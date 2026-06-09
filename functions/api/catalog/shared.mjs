@@ -1,9 +1,11 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TFL_API_BASE = "https://api.tfl.gov.uk";
+const READING_API_BASE = "https://reading-opendata.r2p.com/api/v1";
 const PAGE_LIMIT = 1000;
 const MAX_PAGES = 120;
 
 const busCache = { updatedAt: 0, items: null, pending: null };
+const readingBusCache = { updatedAt: 0, items: null, pending: null };
 const trainCache = { updatedAt: 0, items: null, pending: null };
 
 export async function getCachedBusStops(env = {}) {
@@ -12,6 +14,10 @@ export async function getCachedBusStops(env = {}) {
 
 export async function getCachedTrainStations(env = {}) {
   return getCachedCatalog(trainCache, () => fetchTrainStations(env));
+}
+
+export async function getCachedReadingBusStops(env = {}) {
+  return getCachedCatalog(readingBusCache, () => fetchReadingBusStops(env));
 }
 
 async function getCachedCatalog(cache, load) {
@@ -48,6 +54,28 @@ async function fetchTrainStations(env) {
     .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon))
     .map(normaliseTrainStation)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function fetchReadingBusStops(env) {
+  if (!env.READING_OPEN_DATA_API_TOKEN) {
+    throw new Error("Add READING_OPEN_DATA_API_TOKEN to load Reading bus stops.");
+  }
+
+  const url = new URL(`${READING_API_BASE}/busstops`);
+  url.searchParams.set("api_token", env.READING_OPEN_DATA_API_TOKEN);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Reading bus stop request failed with status ${response.status}.`);
+  }
+
+  const data = await response.json();
+  const items = Array.isArray(data) ? data : data.data || data.busstops || data.busStops || [];
+
+  return dedupeById(items)
+    .map(normaliseReadingBusStop)
+    .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon))
+    .sort((a, b) => a.commonName.localeCompare(b.commonName) || (a.stopLetter || "").localeCompare(b.stopLetter || ""));
 }
 
 async function fetchStopPointsByModes(modes, env) {
@@ -94,6 +122,7 @@ function normaliseBusStop(stop) {
     lat: stop.lat,
     lon: stop.lon,
     additionalProperties: stop.additionalProperties || [],
+    provider: "tfl",
   };
 }
 
@@ -115,6 +144,48 @@ function normaliseTrainStation(stop) {
   };
 }
 
+function normaliseReadingBusStop(stop) {
+  return {
+    id: String(
+      stop.id ||
+        stop.stop_id ||
+        stop.stopId ||
+        stop.atco_code ||
+        stop.atcoCode ||
+        stop.smscode ||
+        stop.smsCode ||
+        stop.code ||
+        "",
+    ),
+    naptanId: String(
+      stop.naptanId ||
+        stop.naptan_id ||
+        stop.atco_code ||
+        stop.atcoCode ||
+        stop.stop_id ||
+        stop.stopId ||
+        stop.id ||
+        "",
+    ),
+    commonName:
+      stop.commonName ||
+      stop.common_name ||
+      stop.name ||
+      stop.stop_name ||
+      stop.stopName ||
+      "Unnamed Reading bus stop",
+    stopLetter: stop.stopLetter || stop.stop_letter || stop.indicator || "",
+    indicator: stop.indicator || stop.towards || "",
+    lat: toNumber(stop.lat ?? stop.latitude),
+    lon: toNumber(stop.lon ?? stop.lng ?? stop.longitude),
+    additionalProperties: Object.entries(stop || {}).map(([key, value]) => ({
+      key,
+      value: value == null ? "" : String(value),
+    })),
+    provider: "reading-buses",
+  };
+}
+
 function getAdditionalProperty(stop, key) {
   return (stop.additionalProperties || []).find((item) => item.key === key)?.value || "";
 }
@@ -124,4 +195,9 @@ function cleanStationName(name) {
     .replace(/\s+Underground Station$/i, "")
     .replace(/\s+Rail Station$/i, "")
     .replace(/\s+Station$/i, "");
+}
+
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
