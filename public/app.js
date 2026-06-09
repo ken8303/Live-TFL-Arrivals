@@ -89,12 +89,14 @@ const state = {
   selectedLivePointId: null,
   loading: false,
   pendingReload: false,
+  busStopCatalog: [],
   selectedAreaStops: [],
   selectedStop: null,
   selectedStopArrivals: [],
   selectedBusRoute: "",
   selectedBusDestination: "",
   selectedSearchQuery: null,
+  trainStationCatalog: [],
   availableTrainStations: [],
   selectedTrainStation: null,
   selectedTrainLine: null,
@@ -360,9 +362,6 @@ async function loadNearby(location) {
 }
 
 async function loadSelectedAreaStops(preferredStopId = state.savedStopId) {
-  const area = getSelectedArea();
-  if (!area) return;
-
   state.loading = true;
   state.selectedStop = null;
   state.selectedStopArrivals = [];
@@ -375,36 +374,34 @@ async function loadSelectedAreaStops(preferredStopId = state.savedStopId) {
   selectedStopSelect.innerHTML = `<option>Loading bus stops...</option>`;
   resetBusFilterSelects("Choose a bus stop first", "Choose a route first");
   selectedStopTitle.textContent = "Select a bus stop";
-  selectedStopPanel.innerHTML = `<div class="empty-state">Loading bus stops in ${escapeHtml(area.label)}...</div>`;
-  setStatus(`Loading bus stops in ${area.label}...`, "waiting");
+  selectedStopPanel.innerHTML = `<div class="empty-state">Loading all TfL bus stops...</div>`;
+  setStatus("Loading all TfL bus stops...", "waiting");
   lastUpdated.textContent = "";
   updateBookmarkUrl();
 
   try {
-    const stops = await findBusStopsForArea(area);
+    const stops = await getBusStopCatalog();
     state.selectedAreaStops = stops;
 
     if (!stops.length) {
       selectedStopSelect.innerHTML = `<option>No bus stops found</option>`;
-      selectedStopPanel.innerHTML = `<div class="empty-state">No bus stops were found for this area.</div>`;
-      setStatus(`No bus stops were found in ${area.label}.`, "error");
+      selectedStopPanel.innerHTML = `<div class="empty-state">No TfL bus stops were returned from the catalog.</div>`;
+      setStatus("No TfL bus stops were returned from the catalog.", "error");
       return;
     }
 
-    selectedStopSelect.innerHTML = stops
-      .map((stop) => `<option value="${escapeHtml(getStopId(stop))}">${escapeHtml(formatStopOption(stop))}</option>`)
-      .join("");
+    populateBusStopSelect(stops);
     selectedStopSelect.disabled = false;
     const preferredStop = preferredStopId ? stops.find((stop) => getStopId(stop) === preferredStopId) : null;
-    const firstResult = preferredStop
-      ? { stop: preferredStop, arrivals: await getArrivals(getStopId(preferredStop), "bus", SELECTED_STOP_ARRIVALS) }
-      : await findFirstStopWithArrivals(stops);
-    state.selectedStop = firstResult.stop;
     state.savedStopId = null;
-    selectedStopSelect.value = getStopId(firstResult.stop);
-    selectedStopTitle.textContent = cleanStationName(firstResult.stop.commonName || "Selected bus stop");
-    renderSelectedStop(firstResult.stop, firstResult.arrivals);
-    setSelectedStopStatus(firstResult.stop, firstResult.arrivals.length);
+    if (preferredStop) {
+      selectedStopSelect.value = getStopId(preferredStop);
+      await loadSelectedStopArrivals(preferredStop);
+    } else {
+      selectedStopTitle.textContent = "Select a bus stop";
+      selectedStopPanel.innerHTML = `<div class="empty-state">Choose any TfL bus stop from the list, or search to narrow it down.</div>`;
+      setStatus(`Loaded ${stops.length} TfL bus stops. Choose one to see live arrivals.`, "ready");
+    }
     updateBookmarkUrl();
     lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
       hour: "2-digit",
@@ -447,7 +444,7 @@ async function loadSearchedBusStops(query, preferredStopId = state.savedStopId) 
   updateBookmarkUrl();
 
   try {
-    const stops = await searchBusStops(query);
+    const stops = filterBusStopCatalog(await getBusStopCatalog(), query);
     state.selectedAreaStops = stops;
 
     if (!stops.length) {
@@ -457,20 +454,18 @@ async function loadSearchedBusStops(query, preferredStopId = state.savedStopId) 
       return;
     }
 
-    selectedStopSelect.innerHTML = stops
-      .map((stop) => `<option value="${escapeHtml(getStopId(stop))}">${escapeHtml(formatStopOption(stop))}</option>`)
-      .join("");
+    populateBusStopSelect(stops);
     selectedStopSelect.disabled = false;
     const preferredStop = preferredStopId ? stops.find((stop) => getStopId(stop) === preferredStopId) : null;
-    const firstResult = preferredStop
-      ? { stop: preferredStop, arrivals: await getArrivals(getStopId(preferredStop), "bus", SELECTED_STOP_ARRIVALS) }
-      : await findFirstStopWithArrivals(stops);
-    state.selectedStop = firstResult.stop;
     state.savedStopId = null;
-    selectedStopSelect.value = getStopId(firstResult.stop);
-    selectedStopTitle.textContent = cleanStationName(firstResult.stop.commonName || "Selected bus stop");
-    renderSelectedStop(firstResult.stop, firstResult.arrivals);
-    setSelectedStopStatus(firstResult.stop, firstResult.arrivals.length);
+    if (preferredStop) {
+      selectedStopSelect.value = getStopId(preferredStop);
+      await loadSelectedStopArrivals(preferredStop);
+    } else {
+      selectedStopTitle.textContent = "Search bus stops";
+      selectedStopPanel.innerHTML = `<div class="empty-state">Found ${stops.length} TfL bus stops. Choose one to see live arrivals.</div>`;
+      setStatus(`Found ${stops.length} TfL bus stops for ${query}.`, "ready");
+    }
     updateBookmarkUrl();
     lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
       hour: "2-digit",
@@ -714,6 +709,83 @@ async function findClosestBusStops(location, targetCount) {
   });
 }
 
+async function getBusStopCatalog() {
+  if (state.busStopCatalog.length) return state.busStopCatalog;
+  const data = await fetchJson("/api/catalog/bus-stops");
+  state.busStopCatalog = (data.items || []).map(normaliseBusCatalogStop);
+  return state.busStopCatalog;
+}
+
+async function getTrainStationCatalog() {
+  if (state.trainStationCatalog.length) return state.trainStationCatalog;
+  const data = await fetchJson("/api/catalog/train-stations");
+  state.trainStationCatalog = (data.items || []).map(normaliseTrainCatalogStation);
+  return state.trainStationCatalog;
+}
+
+function normaliseBusCatalogStop(stop) {
+  return {
+    id: stop.id,
+    naptanId: stop.naptanId || stop.id,
+    commonName: stop.commonName || stop.name,
+    stopLetter: stop.stopLetter || "",
+    indicator: stop.indicator || "",
+    additionalProperties: stop.additionalProperties || [],
+    lat: stop.lat,
+    lon: stop.lon,
+    distance: null,
+  };
+}
+
+function normaliseTrainCatalogStation(stop) {
+  return {
+    id: stop.id,
+    naptanId: stop.naptanId || stop.id,
+    name: cleanStationName(stop.name || stop.commonName || "Unnamed station"),
+    commonName: stop.commonName || stop.name,
+    lat: stop.lat,
+    lon: stop.lon,
+    crs: stop.crs || "",
+    lines: stop.lines || [],
+    additionalProperties: stop.additionalProperties || [],
+  };
+}
+
+function populateBusStopSelect(stops) {
+  selectedStopSelect.innerHTML = stops
+    .map((stop) => `<option value="${escapeHtml(getStopId(stop))}">${escapeHtml(formatStopOption(stop))}</option>`)
+    .join("");
+}
+
+function filterBusStopCatalog(stops, query) {
+  const normalised = query.trim().toLowerCase();
+  if (!normalised) return stops;
+  return stops.filter((stop) => {
+    const fields = [
+      stop.commonName || "",
+      stop.stopLetter || "",
+      stop.indicator || "",
+      getAdditionalProperty(stop, "Towards"),
+      getStopId(stop) || "",
+    ];
+    return fields.some((field) => field.toLowerCase().includes(normalised));
+  });
+}
+
+function filterTrainStationCatalog(stations, query) {
+  const normalised = query.trim().toLowerCase();
+  if (!normalised) return stations;
+  return stations.filter((station) => {
+    const fields = [
+      station.name || "",
+      station.commonName || "",
+      station.crs || "",
+      getStopId(station) || "",
+    ];
+    return fields.some((field) => field.toLowerCase().includes(normalised));
+  });
+}
+
 async function findBusStopsForArea(location) {
   return findClosestPlaces({
     ...location,
@@ -815,7 +887,7 @@ async function loadSearchedTrainStations(query, preferredStationId = null, prefe
   updateBookmarkUrl();
 
   try {
-    const stations = await searchTrainStations(query);
+    const stations = filterTrainStationCatalog(await getTrainStationCatalog(), query);
     state.availableTrainStations = stations;
     populateTrainStations();
     if (!stations.length) {
@@ -841,6 +913,56 @@ async function loadSearchedTrainStations(query, preferredStationId = null, prefe
   }
 }
 
+async function loadAllTrainStations(preferredStationId = null, preferredLine = state.savedTrainLine) {
+  state.loading = true;
+  state.selectedTrainSearchQuery = "";
+  trainStationSearchInput.value = "";
+  state.availableTrainStations = [];
+  state.selectedTrainStation = null;
+  state.selectedTrainLine = null;
+  state.selectedTrainArrivals = [];
+  state.selectedTrainDestination = "";
+  trainStationSelect.disabled = true;
+  trainStationSelect.innerHTML = `<option>Loading train stations...</option>`;
+  trainLineSelect.disabled = true;
+  trainLineSelect.innerHTML = `<option>Choose a station first</option>`;
+  resetTrainDestinationSelect();
+  selectedTrainTitle.textContent = "Select a train station";
+  selectedTrainSubtitle.textContent = "Loading all TfL train stations";
+  selectedTrainPanel.innerHTML = `<div class="empty-state">Loading all TfL train stations...</div>`;
+  lineStatusPanel.innerHTML = "";
+  setStatus("Loading all TfL train stations...", "waiting");
+  updateBookmarkUrl();
+
+  try {
+    const stations = await getTrainStationCatalog();
+    state.availableTrainStations = stations;
+    populateTrainStations();
+    if (!stations.length) {
+      selectedTrainPanel.innerHTML = `<div class="empty-state">No TfL train stations were returned from the catalog.</div>`;
+      setStatus("No TfL train stations were returned from the catalog.", "error");
+      return;
+    }
+    const preferredIndex = preferredStationId ? stations.findIndex((station) => station.id === preferredStationId) : -1;
+    if (preferredIndex >= 0) {
+      trainStationSelect.value = String(preferredIndex);
+      await loadSelectedTrainStation(preferredLine);
+    } else {
+      selectedTrainTitle.textContent = "Select a train station";
+      selectedTrainSubtitle.textContent = "All TfL train stations (cached daily)";
+      selectedTrainPanel.innerHTML = `<div class="empty-state">Loaded ${stations.length} TfL train stations. Choose one to see live arrivals.</div>`;
+      setStatus(`Loaded ${stations.length} TfL train stations. Choose one to see live arrivals.`, "ready");
+    }
+  } catch (error) {
+    console.error(error);
+    selectedTrainPanel.innerHTML = `<div class="empty-state">Train stations could not be loaded. Please try again.</div>`;
+    setStatus("Train stations could not be loaded. Please try again.", "error");
+  } finally {
+    state.loading = false;
+    scheduleNextRefresh();
+  }
+}
+
 async function loadTrainStationById(stationId, preferredLine = state.savedTrainLine) {
   state.loading = true;
   state.selectedTrainSearchQuery = "";
@@ -858,7 +980,7 @@ async function loadTrainStationById(stationId, preferredLine = state.savedTrainL
   updateBookmarkUrl();
 
   try {
-    const station = await fetchStopPointById(stationId);
+    const station = (await getTrainStationCatalog()).find((item) => item.id === stationId) || (await fetchStopPointById(stationId));
     if (!station || !station.id) {
       throw new Error("Station not found");
     }
@@ -1266,11 +1388,8 @@ function showPage(page, options = {}) {
       loadSearchedTrainStations(state.selectedTrainSearchQuery, null, state.savedTrainLine);
       return;
     }
-    selectedTrainTitle.textContent = "Search for a TfL train station";
-    selectedTrainSubtitle.textContent = "Search all TfL stations, lines, and National Rail interchanges";
-    selectedTrainPanel.innerHTML = `<div class="empty-state">Search for any TfL train station to load live arrivals.</div>`;
-    lineStatusPanel.innerHTML = "";
-    setStatus("Search for a TfL train station to begin.", "waiting");
+    loadAllTrainStations();
+    return;
   }
 
   if (page === "live") {
@@ -1284,7 +1403,7 @@ function showPage(page, options = {}) {
   } else if (page === "train" && state.selectedTrainStation) {
     setStatus(`Showing selected station: ${state.selectedTrainStation.name}.`, "ready");
   } else if (page === "train") {
-    setStatus("Search for a TfL train station to begin.", "waiting");
+    setStatus("Choose a TfL train station to begin.", "waiting");
   }
 }
 
@@ -1311,6 +1430,10 @@ function refreshActivePage() {
       loadSearchedTrainStations(state.selectedTrainSearchQuery, state.selectedTrainStation?.id || null, state.savedTrainLine);
       return true;
     }
+    if (!state.trainStationCatalog.length) {
+      loadAllTrainStations(state.selectedTrainStation?.id || null, state.savedTrainLine);
+      return true;
+    }
     return false;
   }
 
@@ -1323,7 +1446,8 @@ function refreshActivePage() {
 }
 
 function populateAreas() {
-  areaSelect.innerHTML = AREAS.map((area, index) => `<option value="${index}">${escapeHtml(area.label)}</option>`).join("");
+  areaSelect.innerHTML = `<option value="all">All London (cached daily)</option>`;
+  areaSelect.disabled = true;
 }
 
 function populateTrainStations() {

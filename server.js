@@ -40,6 +40,7 @@ const londonDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
   hourCycle: "h23",
 });
+let catalogApi = null;
 
 loadEnv();
 
@@ -57,6 +58,18 @@ const server = http.createServer(async (request, response) => {
         configured: Boolean(getConfiguredToken()),
         portalCredentialsConfigured: Boolean(process.env.NATIONAL_RAIL_USERNAME && process.env.NATIONAL_RAIL_PASSWORD),
       });
+      return;
+    }
+
+    if (url.pathname === "/api/catalog/bus-stops") {
+      const { getCachedBusStops } = await getCatalogApi();
+      sendJson(response, 200, await getCachedBusStops(process.env));
+      return;
+    }
+
+    if (url.pathname === "/api/catalog/train-stations") {
+      const { getCachedTrainStations } = await getCatalogApi();
+      sendJson(response, 200, await getCachedTrainStations(process.env));
       return;
     }
 
@@ -87,6 +100,13 @@ function loadEnv() {
     if (!key || process.env[key]) return;
     process.env[key] = rawValue.replace(/^["']|["']$/g, "");
   });
+}
+
+async function getCatalogApi() {
+  if (!catalogApi) {
+    catalogApi = import("./functions/api/catalog/shared.mjs");
+  }
+  return catalogApi;
 }
 
 function serveStatic(pathname, response) {
