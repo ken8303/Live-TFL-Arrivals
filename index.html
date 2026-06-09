@@ -12,7 +12,7 @@
     <link rel="manifest" href="manifest.webmanifest?v=2026-06-08-pwa" />
     <link rel="icon" href="icon.svg?v=2026-06-08-pwa" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg?v=2026-06-08-pwa" />
-    <link rel="stylesheet" href="styles.css?v=2026-06-08-mobiletrainfix" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-09-selectfilters" />
   </head>
   <body>
     <main class="app-shell">
@@ -156,6 +156,18 @@
             </select>
           </label>
           <label>
+            Route
+            <select id="busRouteSelect" disabled>
+              <option>Choose a bus stop first</option>
+            </select>
+          </label>
+          <label>
+            Destination
+            <select id="busDestinationSelect" disabled>
+              <option>Choose a route first</option>
+            </select>
+          </label>
+          <label>
             Delay
             <select id="busDelaySelect"></select>
           </label>
@@ -179,6 +191,13 @@
 
       <div id="selectTrainPage" hidden>
         <section class="select-controls" aria-label="Select train station controls">
+          <form class="select-search-form" id="trainStationSearchForm" aria-label="Search train stations">
+            <label>
+              Search
+              <input id="trainStationSearchInput" placeholder="Station name or place" autocomplete="off" />
+            </label>
+            <button class="secondary-button" type="submit">Search</button>
+          </form>
           <label>
             Train station
             <select id="trainStationSelect"></select>
@@ -187,6 +206,12 @@
             Train line
             <select id="trainLineSelect" disabled>
               <option>Choose a station first</option>
+            </select>
+          </label>
+          <label>
+            Destination
+            <select id="trainDestinationSelect" disabled>
+              <option>Choose a line first</option>
             </select>
           </label>
           <label>
@@ -226,6 +251,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-08-mobiletrainfix"></script>
+    <script src="app.js?v=2026-06-09-selectfilters"></script>
   </body>
 </html>

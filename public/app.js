@@ -9,6 +9,7 @@ const STATION_MODES = new Set(["tube", "dlr", "overground", "elizabeth-line", "n
 const AUTO_REFRESH_SECONDS = 60;
 const SELECTED_STOP_ARRIVALS = 5;
 const SELECTED_STOP_CANDIDATES = 30;
+const SELECTED_STOP_FILTER_CANDIDATES = 30;
 const SELECTED_TRAIN_ARRIVALS = 5;
 const NATIONAL_RAIL_RESULTS = 10;
 const DEFAULT_LIVE_DELAY_MINUTES = 0;
@@ -90,9 +91,16 @@ const state = {
   pendingReload: false,
   selectedAreaStops: [],
   selectedStop: null,
+  selectedStopArrivals: [],
+  selectedBusRoute: "",
+  selectedBusDestination: "",
   selectedSearchQuery: null,
+  availableTrainStations: [...TRAIN_STATIONS],
   selectedTrainStation: null,
   selectedTrainLine: null,
+  selectedTrainArrivals: [],
+  selectedTrainDestination: "",
+  selectedTrainSearchQuery: null,
   savedStopId: null,
   savedTrainLine: null,
   delayMinutes: DEFAULT_LIVE_DELAY_MINUTES,
@@ -138,10 +146,15 @@ const areaSelect = document.querySelector("#areaSelect");
 const selectedStopSelect = document.querySelector("#selectedStopSelect");
 const busStopSearchForm = document.querySelector("#busStopSearchForm");
 const busStopSearchInput = document.querySelector("#busStopSearchInput");
+const busRouteSelect = document.querySelector("#busRouteSelect");
+const busDestinationSelect = document.querySelector("#busDestinationSelect");
 const busDelaySelect = document.querySelector("#busDelaySelect");
 const busRefreshSelect = document.querySelector("#busRefreshSelect");
+const trainStationSearchForm = document.querySelector("#trainStationSearchForm");
+const trainStationSearchInput = document.querySelector("#trainStationSearchInput");
 const trainStationSelect = document.querySelector("#trainStationSelect");
 const trainLineSelect = document.querySelector("#trainLineSelect");
+const trainDestinationSelect = document.querySelector("#trainDestinationSelect");
 const trainDelaySelect = document.querySelector("#trainDelaySelect");
 const trainRefreshSelect = document.querySelector("#trainRefreshSelect");
 
@@ -186,12 +199,38 @@ busStopSearchForm.addEventListener("submit", (event) => {
 });
 selectedStopSelect.addEventListener("change", () => {
   const stop = state.selectedAreaStops.find((item) => getStopId(item) === selectedStopSelect.value);
-  if (stop) loadSelectedStopArrivals(stop);
+  if (stop) {
+    state.selectedBusRoute = "";
+    state.selectedBusDestination = "";
+    loadSelectedStopArrivals(stop);
+  }
+});
+busRouteSelect.addEventListener("change", () => {
+  state.selectedBusRoute = busRouteSelect.value;
+  state.selectedBusDestination = "";
+  syncBusFilters();
+  renderSelectedStopWithFilters();
+});
+busDestinationSelect.addEventListener("change", () => {
+  state.selectedBusDestination = busDestinationSelect.value;
+  renderSelectedStopWithFilters();
+});
+trainStationSearchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const query = trainStationSearchInput.value.trim();
+  if (query) loadSearchedTrainStations(query);
 });
 trainStationSelect.addEventListener("change", () => loadSelectedTrainStation());
 trainLineSelect.addEventListener("change", () => {
   const station = getSelectedTrainStation();
-  if (station && trainLineSelect.value) loadSelectedTrainLine(station, trainLineSelect.value);
+  if (station && trainLineSelect.value) {
+    state.selectedTrainDestination = "";
+    loadSelectedTrainLine(station, trainLineSelect.value);
+  }
+});
+trainDestinationSelect.addEventListener("change", () => {
+  state.selectedTrainDestination = trainDestinationSelect.value;
+  renderSelectedTrainWithFilters();
 });
 populateAreas();
 populateTrainStations();
@@ -326,11 +365,15 @@ async function loadSelectedAreaStops(preferredStopId = state.savedStopId) {
 
   state.loading = true;
   state.selectedStop = null;
+  state.selectedStopArrivals = [];
+  state.selectedBusRoute = "";
+  state.selectedBusDestination = "";
   state.selectedSearchQuery = null;
   busStopSearchInput.value = "";
   state.selectedAreaStops = [];
   selectedStopSelect.disabled = true;
   selectedStopSelect.innerHTML = `<option>Loading bus stops...</option>`;
+  resetBusFilterSelects("Choose a bus stop first", "Choose a route first");
   selectedStopTitle.textContent = "Select a bus stop";
   selectedStopPanel.innerHTML = `<div class="empty-state">Loading bus stops in ${escapeHtml(area.label)}...</div>`;
   setStatus(`Loading bus stops in ${area.label}...`, "waiting");
@@ -388,11 +431,15 @@ async function loadSearchedBusStops(query, preferredStopId = state.savedStopId) 
 
   state.loading = true;
   state.selectedStop = null;
+  state.selectedStopArrivals = [];
+  state.selectedBusRoute = "";
+  state.selectedBusDestination = "";
   state.selectedSearchQuery = query;
   state.selectedAreaStops = [];
   busStopSearchInput.value = query;
   selectedStopSelect.disabled = true;
   selectedStopSelect.innerHTML = `<option>Searching bus stops...</option>`;
+  resetBusFilterSelects("Choose a bus stop first", "Choose a route first");
   selectedStopTitle.textContent = "Search bus stops";
   selectedStopPanel.innerHTML = `<div class="empty-state">Searching bus stops for ${escapeHtml(query)}...</div>`;
   setStatus(`Searching bus stops for ${query}...`, "waiting");
@@ -440,7 +487,7 @@ async function loadSearchedBusStops(query, preferredStopId = state.savedStopId) 
   }
 }
 
-async function loadSelectedStopArrivals(stop) {
+async function loadSelectedStopArrivals(stop, preferredRoute = state.selectedBusRoute, preferredDestination = state.selectedBusDestination) {
   if (state.loading) {
     state.selectedStop = stop;
     state.pendingReload = true;
@@ -449,6 +496,9 @@ async function loadSelectedStopArrivals(stop) {
 
   state.loading = true;
   state.selectedStop = stop;
+  state.selectedStopArrivals = [];
+  state.selectedBusRoute = preferredRoute || "";
+  state.selectedBusDestination = preferredDestination || "";
   updateBookmarkUrl();
   selectedStopTitle.textContent = cleanStationName(stop.commonName || "Selected bus stop");
   selectedStopPanel.innerHTML = "";
@@ -457,9 +507,10 @@ async function loadSelectedStopArrivals(stop) {
   lastUpdated.textContent = "";
 
   try {
-    const arrivals = await getArrivals(getStopId(stop), "bus", SELECTED_STOP_ARRIVALS);
-    renderSelectedStop(stop, arrivals);
-    setSelectedStopStatus(stop, arrivals.length);
+    const arrivals = await getArrivals(getStopId(stop), "bus", SELECTED_STOP_FILTER_CANDIDATES);
+    state.selectedStopArrivals = arrivals;
+    syncBusFilters();
+    renderSelectedStopWithFilters();
     updateBookmarkUrl();
     lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
       hour: "2-digit",
@@ -487,8 +538,11 @@ async function loadSelectedTrainStation(preferredLine = state.savedTrainLine) {
   state.loading = true;
   state.selectedTrainStation = station;
   state.selectedTrainLine = null;
+  state.selectedTrainArrivals = [];
+  state.selectedTrainDestination = "";
   trainLineSelect.disabled = true;
   trainLineSelect.innerHTML = `<option>Loading train lines...</option>`;
+  resetTrainDestinationSelect();
   selectedTrainTitle.textContent = station.name;
   selectedTrainSubtitle.textContent = "Next 5 arrivals";
   lineStatusPanel.innerHTML = "";
@@ -527,7 +581,7 @@ async function loadSelectedTrainStation(preferredLine = state.savedTrainLine) {
   }
 }
 
-async function loadSelectedTrainLine(station, lineId) {
+async function loadSelectedTrainLine(station, lineId, preferredDestination = state.selectedTrainDestination) {
   if (state.loading) {
     state.selectedTrainStation = station;
     state.selectedTrainLine = lineId;
@@ -538,8 +592,11 @@ async function loadSelectedTrainLine(station, lineId) {
   state.loading = true;
   state.selectedTrainStation = station;
   state.selectedTrainLine = lineId;
+  state.selectedTrainDestination = preferredDestination || "";
+  state.selectedTrainArrivals = [];
   updateBookmarkUrl();
   trainLineSelect.value = lineId;
+  resetTrainDestinationSelect("Loading destinations...");
   selectedTrainTitle.textContent = station.name;
   selectedTrainSubtitle.textContent =
     lineId === "national-rail" && station.crs ? `Next ${NATIONAL_RAIL_RESULTS} departures` : `Next ${SELECTED_TRAIN_ARRIVALS} arrivals`;
@@ -556,9 +613,10 @@ async function loadSelectedTrainLine(station, lineId) {
       lineId === "national-rail" && station.crs
         ? allArrivals.slice(0, limit)
         : filterArrivalsByLine(allArrivals, lineId).slice(0, limit);
+    state.selectedTrainArrivals = arrivals;
+    syncTrainDestinationSelect();
     renderLineStatus(lineStatus, lineId);
-    renderSelectedTrainStation(station, arrivals, lineId);
-    setTrainStationStatus(station, lineId, arrivals.length, lineStatus);
+    renderSelectedTrainWithFilters(lineStatus);
     updateBookmarkUrl();
     lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
       hour: "2-digit",
@@ -582,6 +640,68 @@ async function loadSelectedTrainLine(station, lineId) {
       scheduleNextRefresh();
     }
   }
+}
+
+function resetBusFilterSelects(routeLabel = "Choose a bus stop first", destinationLabel = "Choose a route first") {
+  busRouteSelect.disabled = true;
+  busRouteSelect.innerHTML = `<option value="">${escapeHtml(routeLabel)}</option>`;
+  busDestinationSelect.disabled = true;
+  busDestinationSelect.innerHTML = `<option value="">${escapeHtml(destinationLabel)}</option>`;
+}
+
+function syncBusFilters() {
+  const routeOptions = getBusRouteOptions(state.selectedStopArrivals);
+  busRouteSelect.innerHTML = [`<option value="">All routes</option>`]
+    .concat(routeOptions.map((route) => `<option value="${escapeHtml(route)}">${escapeHtml(route)}</option>`))
+    .join("");
+  busRouteSelect.disabled = routeOptions.length === 0;
+  if (!routeOptions.includes(state.selectedBusRoute)) state.selectedBusRoute = "";
+  busRouteSelect.value = state.selectedBusRoute;
+
+  const destinationOptions = getBusDestinationOptions(state.selectedStopArrivals, state.selectedBusRoute);
+  busDestinationSelect.innerHTML = [`<option value="">All destinations</option>`]
+    .concat(destinationOptions.map((destination) => `<option value="${escapeHtml(destination)}">${escapeHtml(destination)}</option>`))
+    .join("");
+  busDestinationSelect.disabled = destinationOptions.length === 0;
+  if (!destinationOptions.includes(state.selectedBusDestination)) state.selectedBusDestination = "";
+  busDestinationSelect.value = state.selectedBusDestination;
+}
+
+function renderSelectedStopWithFilters() {
+  if (!state.selectedStop) return;
+  const filteredArrivals = filterBusArrivals(
+    state.selectedStopArrivals,
+    state.selectedBusRoute,
+    state.selectedBusDestination,
+  ).slice(0, SELECTED_STOP_ARRIVALS);
+  renderSelectedStop(state.selectedStop, filteredArrivals);
+  setSelectedStopStatus(state.selectedStop, filteredArrivals.length);
+  updateBookmarkUrl();
+}
+
+function resetTrainDestinationSelect(label = "Choose a line first") {
+  trainDestinationSelect.disabled = true;
+  trainDestinationSelect.innerHTML = `<option value="">${escapeHtml(label)}</option>`;
+}
+
+function syncTrainDestinationSelect() {
+  const destinations = getDestinationOptions(state.selectedTrainArrivals);
+  trainDestinationSelect.innerHTML = [`<option value="">All destinations</option>`]
+    .concat(destinations.map((destination) => `<option value="${escapeHtml(destination)}">${escapeHtml(destination)}</option>`))
+    .join("");
+  trainDestinationSelect.disabled = destinations.length === 0;
+  if (!destinations.includes(state.selectedTrainDestination)) state.selectedTrainDestination = "";
+  trainDestinationSelect.value = state.selectedTrainDestination;
+}
+
+function renderSelectedTrainWithFilters(lineStatus = null) {
+  if (!state.selectedTrainStation || !state.selectedTrainLine) return;
+  const station = state.selectedTrainStation;
+  const lineId = state.selectedTrainLine;
+  const filteredArrivals = filterArrivalsByDestination(state.selectedTrainArrivals, state.selectedTrainDestination);
+  renderSelectedTrainStation(station, filteredArrivals, lineId);
+  setTrainStationStatus(station, lineId, filteredArrivals.length, lineStatus);
+  updateBookmarkUrl();
 }
 
 async function findClosestBusStops(location, targetCount) {
@@ -634,6 +754,91 @@ async function searchBusStops(query) {
       lines: [],
     }))
     .slice(0, SELECTED_STOP_CANDIDATES);
+}
+
+async function searchTrainStations(query) {
+  const postcodeLocation = await lookupPostcode(query);
+  if (postcodeLocation) {
+    return findClosestPlaces({
+      ...postcodeLocation,
+      stopTypes: "NaptanMetroStation,NaptanRailStation",
+      modes: "tube,dlr,overground,elizabeth-line,national-rail,tram",
+      targetCount: SELECTED_STOP_CANDIDATES,
+      candidateCount: SELECTED_STOP_CANDIDATES,
+    });
+  }
+
+  const url = new URL(`${API_BASE}/StopPoint/Search/${encodeURIComponent(query)}`);
+  url.searchParams.set("modes", "tube,dlr,overground,elizabeth-line,national-rail,tram");
+  const data = await fetchJson(url);
+
+  return (data.matches || [])
+    .filter(
+      (match) =>
+        match.id &&
+        Number.isFinite(match.lat) &&
+        Number.isFinite(match.lon) &&
+        (match.modes || []).some((mode) => STATION_MODES.has(mode)),
+    )
+    .map((match) => ({
+      id: match.id,
+      name: cleanStationName(match.name || "Unnamed station"),
+      commonName: match.name,
+      lat: match.lat,
+      lon: match.lon,
+      distance: match.distance ?? null,
+      lines: [],
+    }))
+    .slice(0, SELECTED_STOP_CANDIDATES);
+}
+
+async function loadSearchedTrainStations(query, preferredStationId = null, preferredLine = state.savedTrainLine) {
+  state.loading = true;
+  state.selectedTrainSearchQuery = query;
+  trainStationSearchInput.value = query;
+  state.availableTrainStations = [];
+  state.selectedTrainStation = null;
+  state.selectedTrainLine = null;
+  state.selectedTrainArrivals = [];
+  state.selectedTrainDestination = "";
+  trainStationSelect.disabled = true;
+  trainStationSelect.innerHTML = `<option>Searching train stations...</option>`;
+  trainLineSelect.disabled = true;
+  trainLineSelect.innerHTML = `<option>Choose a station first</option>`;
+  resetTrainDestinationSelect();
+  selectedTrainTitle.textContent = "Search train stations";
+  selectedTrainSubtitle.textContent = "Next arrivals";
+  selectedTrainPanel.innerHTML = `<div class="empty-state">Searching train stations for ${escapeHtml(query)}...</div>`;
+  lineStatusPanel.innerHTML = "";
+  setStatus(`Searching train stations for ${query}...`, "waiting");
+  lastUpdated.textContent = "";
+  updateBookmarkUrl();
+
+  try {
+    const stations = await searchTrainStations(query);
+    state.availableTrainStations = stations;
+    populateTrainStations();
+    if (!stations.length) {
+      trainStationSelect.innerHTML = `<option>No train stations found</option>`;
+      selectedTrainPanel.innerHTML = `<div class="empty-state">No TfL stations matched this search.</div>`;
+      setStatus(`No TfL stations matched ${query}.`, "error");
+      return;
+    }
+
+    trainStationSelect.disabled = false;
+    const preferredIndex = preferredStationId ? stations.findIndex((station) => station.id === preferredStationId) : -1;
+    trainStationSelect.value = String(preferredIndex >= 0 ? preferredIndex : 0);
+    state.savedTrainLine = preferredLine;
+    await loadSelectedTrainStation(preferredLine);
+  } catch (error) {
+    console.error(error);
+    trainStationSelect.innerHTML = `<option>Search failed</option>`;
+    selectedTrainPanel.innerHTML = `<div class="empty-state">Train station search could not be loaded. Please try again.</div>`;
+    setStatus("Train station search could not be loaded. Please try again.", "error");
+  } finally {
+    state.loading = false;
+    scheduleNextRefresh();
+  }
 }
 
 async function lookupPostcode(query) {
@@ -1056,7 +1261,8 @@ function populateAreas() {
 }
 
 function populateTrainStations() {
-  trainStationSelect.innerHTML = TRAIN_STATIONS.map(
+  const stations = state.availableTrainStations.length ? state.availableTrainStations : TRAIN_STATIONS;
+  trainStationSelect.innerHTML = stations.map(
     (station, index) => `<option value="${index}">${escapeHtml(station.name)}</option>`,
   ).join("");
 }
@@ -1085,7 +1291,8 @@ function getSelectedArea() {
 }
 
 function getSelectedTrainStation() {
-  return TRAIN_STATIONS[Number.parseInt(trainStationSelect.value, 10)] || TRAIN_STATIONS[0];
+  const stations = state.availableTrainStations.length ? state.availableTrainStations : TRAIN_STATIONS;
+  return stations[Number.parseInt(trainStationSelect.value, 10)] || stations[0] || TRAIN_STATIONS[0];
 }
 
 function restoreFromUrl() {
@@ -1108,6 +1315,8 @@ function restoreFromUrl() {
     const areaIndex = Number.parseInt(params.get("area"), 10);
     if (Number.isInteger(areaIndex) && AREAS[areaIndex]) areaSelect.value = String(areaIndex);
     state.savedStopId = params.get("stop");
+    state.selectedBusRoute = params.get("route") || "";
+    state.selectedBusDestination = params.get("destination") || "";
     if (params.get("q")) {
       loadSearchedBusStops(params.get("q"), state.savedStopId);
       return;
@@ -1117,9 +1326,14 @@ function restoreFromUrl() {
   }
 
   if (page === "train") {
+    state.savedTrainLine = params.get("line");
+    state.selectedTrainDestination = params.get("destination") || "";
+    if (params.get("q")) {
+      loadSearchedTrainStations(params.get("q"), params.get("station"), state.savedTrainLine);
+      return;
+    }
     const stationIndex = getTrainStationIndex(params.get("station"));
     if (stationIndex >= 0) trainStationSelect.value = String(stationIndex);
-    state.savedTrainLine = params.get("line");
     loadSelectedTrainStation(state.savedTrainLine);
     return;
   }
@@ -1162,6 +1376,8 @@ function updateBookmarkUrl() {
       params.set("area", areaSelect.value || "0");
     }
     if (state.selectedStop) params.set("stop", getStopId(state.selectedStop));
+    if (state.selectedBusRoute) params.set("route", state.selectedBusRoute);
+    if (state.selectedBusDestination) params.set("destination", state.selectedBusDestination);
   }
 
   if (state.activePage === "train") {
@@ -1169,7 +1385,9 @@ function updateBookmarkUrl() {
     params.set("refresh", state.autoRefreshEnabled ? "on" : "off");
     const station = state.selectedTrainStation || getSelectedTrainStation();
     params.set("station", station.id);
+    if (state.selectedTrainSearchQuery) params.set("q", state.selectedTrainSearchQuery);
     if (state.selectedTrainLine) params.set("line", state.selectedTrainLine);
+    if (state.selectedTrainDestination) params.set("destination", state.selectedTrainDestination);
   }
 
   const nextUrl = `${window.location.pathname}?${params.toString()}`;
@@ -1181,8 +1399,9 @@ function updateBookmarkUrl() {
 function getTrainStationIndex(value) {
   if (!value) return -1;
   const asNumber = Number.parseInt(value, 10);
-  if (Number.isInteger(asNumber) && TRAIN_STATIONS[asNumber]) return asNumber;
-  return TRAIN_STATIONS.findIndex((station) => station.id === value);
+  const stations = state.availableTrainStations.length ? state.availableTrainStations : TRAIN_STATIONS;
+  if (Number.isInteger(asNumber) && stations[asNumber]) return asNumber;
+  return stations.findIndex((station) => station.id === value);
 }
 
 function trimCoordinate(value) {
@@ -1240,12 +1459,41 @@ function getArrivalLines(arrivals, station) {
   return [...lineMap.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function getBusRouteOptions(arrivals) {
+  return [...new Set(arrivals.map((arrival) => arrival.lineName || arrival.lineId).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
+function getBusDestinationOptions(arrivals, route) {
+  return getDestinationOptions(route ? arrivals.filter((arrival) => (arrival.lineName || arrival.lineId) === route) : arrivals);
+}
+
+function getDestinationOptions(arrivals) {
+  return [...new Set(arrivals.map((arrival) => cleanStationName(arrival.destinationName || "")).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
+function filterBusArrivals(arrivals, route, destination) {
+  return arrivals.filter((arrival) => {
+    const matchesRoute = !route || (arrival.lineName || arrival.lineId) === route;
+    const matchesDestination = !destination || cleanStationName(arrival.destinationName || "") === destination;
+    return matchesRoute && matchesDestination;
+  });
+}
+
 function filterArrivalsByLine(arrivals, lineId) {
   if (lineId === "national-rail") {
     return arrivals.filter((arrival) => arrival.modeName === "national-rail" && isAfterDelay(arrival.timeToStation));
   }
 
   return arrivals.filter((arrival) => arrival.lineId === lineId && isAfterDelay(arrival.timeToStation));
+}
+
+function filterArrivalsByDestination(arrivals, destination) {
+  if (!destination) return arrivals;
+  return arrivals.filter((arrival) => cleanStationName(arrival.destinationName || "") === destination);
 }
 
 function formatLineName(lineId) {
