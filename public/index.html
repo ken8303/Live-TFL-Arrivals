@@ -12,7 +12,7 @@
     <link rel="manifest" href="manifest.webmanifest?v=2026-06-08-pwa" />
     <link rel="icon" href="icon.svg?v=2026-06-08-pwa" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg?v=2026-06-08-pwa" />
-    <link rel="stylesheet" href="styles.css?v=2026-06-09-dailycatalogcache" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-09-nearbyselect" />
   </head>
   <body>
     <main class="app-shell">
@@ -138,21 +138,24 @@
 
       <div id="selectPage" hidden>
         <section class="select-controls bus-select-controls" aria-label="Select bus stop controls">
-          <form class="select-search-form" id="busStopSearchForm" aria-label="Search bus stops">
+          <button class="primary-button" id="busLocateButton" type="button">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+              <circle cx="12" cy="12" r="5" />
+            </svg>
+            Use my location
+          </button>
+          <form class="select-search-form" id="busLocationForm" aria-label="Search bus location">
             <label>
-              Search
-              <input id="busStopSearchInput" placeholder="Postcode, station, road, or place" autocomplete="off" />
+              Location
+              <input id="busLocationInput" placeholder="Postcode, station, road, or place" autocomplete="off" />
             </label>
             <button class="secondary-button" type="submit">Search</button>
           </form>
           <label>
-            Area
-            <select id="areaSelect"></select>
-          </label>
-          <label>
-            Bus stop
+            Bus stops within 1 km
             <select id="selectedStopSelect" disabled>
-              <option>Choose an area first</option>
+              <option>Search a location first</option>
             </select>
           </label>
           <label>
@@ -191,15 +194,22 @@
 
       <div id="selectTrainPage" hidden>
         <section class="select-controls" aria-label="Select train station controls">
-          <form class="select-search-form" id="trainStationSearchForm" aria-label="Search train stations">
+          <button class="primary-button" id="trainLocateButton" type="button">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+              <circle cx="12" cy="12" r="5" />
+            </svg>
+            Use my location
+          </button>
+          <form class="select-search-form" id="trainLocationForm" aria-label="Search train location">
             <label>
-              Search
-              <input id="trainStationSearchInput" placeholder="Station name or place" autocomplete="off" />
+              Location
+              <input id="trainLocationInput" placeholder="Postcode, station, road, or place" autocomplete="off" />
             </label>
             <button class="secondary-button" type="submit">Search</button>
           </form>
           <label>
-            Train station
+            Train stations within 1 km
             <select id="trainStationSelect"></select>
           </label>
           <label>
@@ -251,6 +261,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-09-dailycatalogcache"></script>
+    <script src="app.js?v=2026-06-09-nearbyselect"></script>
   </body>
 </html>
