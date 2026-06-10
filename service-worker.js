@@ -1,9 +1,9 @@
-const STATIC_CACHE = "live-tfl-arrivals-static-v9";
+const STATIC_CACHE = "live-tfl-arrivals-static-v10";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/styles.css?v=2026-06-10-bottomnav2",
-  "/app.js?v=2026-06-10-serverpush",
+  "/app.js?v=2026-06-10-securityfix",
   "/manifest.webmanifest?v=2026-06-08-pwa",
   "/icon.svg?v=2026-06-08-pwa",
   "/icon-maskable.svg?v=2026-06-08-pwa",
@@ -37,8 +37,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(STATIC_CACHE).then((cache) => cache.put("/index.html", copy));
+          if (response.ok && response.headers.get("content-type")?.includes("text/html")) {
+            const copy = response.clone();
+            caches.open(STATIC_CACHE).then((cache) => cache.put("/index.html", copy));
+          }
           return response;
         })
         .catch(() => caches.match("/index.html")),
@@ -62,7 +64,7 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || "/";
+  const targetUrl = normaliseNotificationUrl(event.notification.data?.url);
   event.waitUntil(clients.openWindow(targetUrl));
 });
 
@@ -84,8 +86,18 @@ self.addEventListener("push", (event) => {
       badge: "/icon-maskable.svg?v=2026-06-08-pwa",
       tag: "live-tfl-arrivals-server-schedule",
       data: {
-        url: payload.url || "/?page=scheduler",
+        url: normaliseNotificationUrl(payload.url || "/?page=scheduler"),
       },
     }),
   );
 });
+
+function normaliseNotificationUrl(value) {
+  try {
+    const url = new URL(value || "/", self.location.origin);
+    if (url.origin !== self.location.origin) return "/";
+    return `${url.pathname}${url.search}${url.hash}` || "/";
+  } catch {
+    return "/";
+  }
+}

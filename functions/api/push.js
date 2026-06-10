@@ -3,9 +3,20 @@ import { onRequestGet as getReadingBusPredictions } from "./reading-buses/predic
 
 const API_BASE = "https://api.tfl.gov.uk";
 const SCHEDULE_PREFIX = "schedule:";
+const RATE_LIMIT_PREFIX = "push-rate:";
 const DEFAULT_TTL_SECONDS = 60 * 60;
 const MAX_PUSH_LINES = 3;
+const MAX_SCHEDULES_PER_SUBSCRIPTION = 20;
+const MAX_SCHEDULE_PAGE_COUNT = 20;
+const MAX_SCHEDULE_BATCH_SIZE = 10;
+const SCHEDULE_CATCHUP_MINUTES = 5;
 const LONDON_TIME_ZONE = "Europe/London";
+const ALLOWED_PUSH_HOSTS = new Set([
+  "updates.push.services.mozilla.com",
+  "fcm.googleapis.com",
+  "android.googleapis.com",
+  "web.push.apple.com",
+]);
 
 export async function getPushPublicKey({ env }) {
   return json({
@@ -19,24 +30,40 @@ export async function savePushSchedule({ request, env }) {
     return json({ error: "Server push storage is not configured." }, 501);
   }
 
+  const guard = await validateWriteRequest(request, env, { limit: 30 });
+  if (guard) return guard;
+
   const payload = await request.json();
   const subscription = normaliseSubscription(payload.subscription);
   const schedule = normaliseSchedule(payload.schedule);
   const timeZone = normaliseTimeZone(payload.timeZone);
+  const clientToken = normaliseClientToken(payload.clientToken);
 
-  if (!subscription || !schedule) {
-    return json({ error: "A valid push subscription and schedule are required." }, 400);
+  if (!subscription || !schedule || !clientToken) {
+    return json({ error: "A valid push subscription, schedule, and device token are required." }, 400);
   }
 
   const endpointHash = await sha256(subscription.endpoint);
   const key = getScheduleKey(endpointHash, schedule.id);
   const existing = await env.PUSH_SCHEDULES.get(key, "json");
+  const clientTokenHash = await sha256(clientToken);
+
+  if (existing?.clientTokenHash && existing.clientTokenHash !== clientTokenHash) {
+    return json({ error: "This schedule belongs to another device." }, 403);
+  }
+
+  const scheduleCount = await countSchedulesForEndpoint(env, endpointHash);
+  if (!existing && scheduleCount >= MAX_SCHEDULES_PER_SUBSCRIPTION) {
+    return json({ error: `Only ${MAX_SCHEDULES_PER_SUBSCRIPTION} server schedules can be saved on one device.` }, 429);
+  }
+
   await env.PUSH_SCHEDULES.put(
     key,
     JSON.stringify({
       subscription,
       schedule,
       timeZone,
+      clientTokenHash,
       lastFiredKey: existing?.lastFiredKey || "",
       updatedAt: new Date().toISOString(),
     }),
@@ -50,23 +77,36 @@ export async function deletePushSchedule({ request, env }) {
     return json({ ok: true, skipped: "Server push storage is not configured." });
   }
 
+  const guard = await validateWriteRequest(request, env, { limit: 30 });
+  if (guard) return guard;
+
   const payload = await request.json();
   const endpoint = String(payload.endpoint || "");
   const scheduleId = String(payload.scheduleId || "");
-  if (!endpoint || !scheduleId) {
-    return json({ error: "Endpoint and scheduleId are required." }, 400);
+  const clientToken = normaliseClientToken(payload.clientToken);
+  if (!endpoint || !scheduleId || !clientToken) {
+    return json({ error: "Endpoint, scheduleId, and device token are required." }, 400);
   }
 
   const endpointHash = await sha256(endpoint);
-  await env.PUSH_SCHEDULES.delete(getScheduleKey(endpointHash, scheduleId));
+  const key = getScheduleKey(endpointHash, normaliseScheduleId(scheduleId));
+  const existing = await env.PUSH_SCHEDULES.get(key, "json");
+  if (existing?.clientTokenHash && existing.clientTokenHash !== await sha256(clientToken)) {
+    return json({ error: "This schedule belongs to another device." }, 403);
+  }
+  await env.PUSH_SCHEDULES.delete(key);
   return json({ ok: true });
 }
 
 export async function sendPushTest({ request, env }) {
+  const guard = await validateWriteRequest(request, env, { limit: 5 });
+  if (guard) return guard;
+
   const payload = await request.json();
   const subscription = normaliseSubscription(payload.subscription);
-  if (!subscription) {
-    return json({ error: "A valid push subscription is required." }, 400);
+  const clientToken = normaliseClientToken(payload.clientToken);
+  if (!subscription || !clientToken) {
+    return json({ error: "A valid push subscription and device token are required." }, 400);
   }
 
   const result = await sendWebPush(
@@ -74,7 +114,7 @@ export async function sendPushTest({ request, env }) {
     {
       title: payload.title || "Live TfL Arrivals",
       body: "Server push notification is working.",
-      url: payload.url || "/",
+      url: normaliseSameOriginPath(payload.url),
     },
     env,
   );
@@ -87,9 +127,12 @@ export async function runScheduledPush(_controller, env) {
 
   let cursor;
   do {
-    const page = await env.PUSH_SCHEDULES.list({ prefix: SCHEDULE_PREFIX, cursor, limit: 100 });
+    const page = await env.PUSH_SCHEDULES.list({ prefix: SCHEDULE_PREFIX, cursor, limit: MAX_SCHEDULE_PAGE_COUNT });
     cursor = page.cursor;
-    await Promise.all(page.keys.map((item) => processStoredSchedule(item.name, env)));
+    for (let index = 0; index < page.keys.length; index += MAX_SCHEDULE_BATCH_SIZE) {
+      const batch = page.keys.slice(index, index + MAX_SCHEDULE_BATCH_SIZE);
+      await Promise.all(batch.map((item) => processStoredSchedule(item.name, env)));
+    }
   } while (cursor);
 }
 
@@ -106,7 +149,7 @@ async function processStoredSchedule(key, env) {
     {
       title: stored.schedule.title || "Live TfL Arrivals",
       body,
-      url: stored.schedule.pageUrl || "/",
+      url: normaliseSameOriginPath(stored.schedule.pageUrl),
     },
     env,
   );
@@ -124,11 +167,17 @@ async function processStoredSchedule(key, env) {
 }
 
 function getDueMinuteKey(schedule, timeZone) {
-  const parts = getTimeZoneParts(new Date(), timeZone);
-  if (!parts) return "";
+  const now = new Date();
+  const parts = getTimeZoneParts(now, timeZone);
+  if (!parts || !isValidTime(schedule.time)) return "";
   if (!Array.isArray(schedule.weekdays) || !schedule.weekdays.includes(parts.weekday)) return "";
-  if (schedule.time !== `${parts.hour}:${parts.minute}`) return "";
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+
+  const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
+  const [scheduleHour, scheduleMinute] = schedule.time.split(":").map(Number);
+  const scheduleMinutes = scheduleHour * 60 + scheduleMinute;
+  if (currentMinutes < scheduleMinutes || currentMinutes > scheduleMinutes + SCHEDULE_CATCHUP_MINUTES) return "";
+
+  return `${parts.year}-${parts.month}-${parts.day}T${schedule.time}`;
 }
 
 function getTimeZoneParts(date, timeZone) {
@@ -155,6 +204,61 @@ function getTimeZoneParts(date, timeZone) {
   } catch {
     return null;
   }
+}
+
+async function validateWriteRequest(request, env, { limit }) {
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed." }, 405);
+  }
+
+  if (!isSameOriginPost(request)) {
+    return json({ error: "Server push changes must come from this website." }, 403);
+  }
+
+  if (env.PUSH_SCHEDULES) {
+    const rateKey = `${RATE_LIMIT_PREFIX}${await sha256(getClientAddress(request))}`;
+    const count = Number(await env.PUSH_SCHEDULES.get(rateKey) || "0");
+    if (count >= limit) {
+      return json({ error: "Too many scheduler requests. Please wait a minute and try again." }, 429);
+    }
+    await env.PUSH_SCHEDULES.put(rateKey, String(count + 1), { expirationTtl: 60 });
+  }
+
+  return null;
+}
+
+function isSameOriginPost(request) {
+  const origin = request.headers.get("Origin");
+  const host = request.headers.get("Host");
+  if (!origin || !host) return false;
+
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+function getClientAddress(request) {
+  return request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
+    "unknown";
+}
+
+async function countSchedulesForEndpoint(env, endpointHash) {
+  let cursor;
+  let count = 0;
+  do {
+    const page = await env.PUSH_SCHEDULES.list({
+      prefix: `${SCHEDULE_PREFIX}${endpointHash}:`,
+      cursor,
+      limit: MAX_SCHEDULE_PAGE_COUNT,
+    });
+    count += page.keys.length;
+    cursor = page.cursor;
+    if (count >= MAX_SCHEDULES_PER_SUBSCRIPTION) return count;
+  } while (cursor);
+  return count;
 }
 
 async function getScheduleBody(schedule, env) {
@@ -339,34 +443,86 @@ function getVapidPrivateKey(env) {
 
 function normaliseSubscription(subscription) {
   if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return null;
+  let endpoint;
+  try {
+    endpoint = new URL(subscription.endpoint);
+  } catch {
+    return null;
+  }
+
+  if (endpoint.protocol !== "https:" || !isAllowedPushHost(endpoint.hostname)) return null;
+  const p256dh = String(subscription.keys.p256dh);
+  const auth = String(subscription.keys.auth);
+  if (!isBase64UrlToken(p256dh, 80, 180) || !isBase64UrlToken(auth, 16, 80)) return null;
+
   return {
-    endpoint: String(subscription.endpoint),
+    endpoint: endpoint.href,
     keys: {
-      p256dh: String(subscription.keys.p256dh),
-      auth: String(subscription.keys.auth),
+      p256dh,
+      auth,
     },
   };
 }
 
 function normaliseSchedule(schedule) {
   if (!schedule?.id || !schedule?.type || !schedule?.time || !Array.isArray(schedule.weekdays)) return null;
+  const id = normaliseScheduleId(schedule.id);
+  const time = String(schedule.time).slice(0, 5);
+  if (!id || !isValidTime(time)) return null;
+
   return {
-    id: String(schedule.id),
+    id,
     type: schedule.type === "train" ? "train" : "bus",
     title: String(schedule.title || "Live transport reminder").slice(0, 120),
     subtitle: String(schedule.subtitle || "").slice(0, 180),
-    time: String(schedule.time).slice(0, 5),
+    time,
     weekdays: schedule.weekdays.map((day) => Number.parseInt(day, 10)).filter((day) => day >= 0 && day <= 6),
-    stopId: String(schedule.stopId || ""),
-    provider: String(schedule.provider || "tfl"),
-    route: String(schedule.route || ""),
-    destination: String(schedule.destination || ""),
-    stationId: String(schedule.stationId || ""),
-    crs: String(schedule.crs || ""),
-    lineId: String(schedule.lineId || ""),
-    lineName: String(schedule.lineName || ""),
-    pageUrl: String(schedule.pageUrl || "/"),
+    stopId: String(schedule.stopId || "").slice(0, 120),
+    provider: String(schedule.provider || "tfl").slice(0, 40),
+    route: String(schedule.route || "").slice(0, 80),
+    destination: String(schedule.destination || "").slice(0, 120),
+    stationId: String(schedule.stationId || "").slice(0, 120),
+    crs: String(schedule.crs || "").slice(0, 3).toUpperCase(),
+    lineId: String(schedule.lineId || "").slice(0, 80),
+    lineName: String(schedule.lineName || "").slice(0, 120),
+    pageUrl: normaliseSameOriginPath(schedule.pageUrl),
   };
+}
+
+function normaliseScheduleId(value) {
+  return String(value || "")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 80);
+}
+
+function normaliseClientToken(value) {
+  const token = String(value || "");
+  return /^[a-zA-Z0-9_-]{32,160}$/.test(token) ? token : "";
+}
+
+function normaliseSameOriginPath(value) {
+  try {
+    const url = new URL(String(value || "/"), "https://live-tfl-arrivals.local");
+    if (url.origin !== "https://live-tfl-arrivals.local") return "/";
+    return `${url.pathname}${url.search}${url.hash}` || "/";
+  } catch {
+    return "/";
+  }
+}
+
+function isValidTime(value) {
+  if (!/^\d{2}:\d{2}$/.test(String(value))) return false;
+  const [hours, minutes] = String(value).split(":").map(Number);
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+}
+
+function isAllowedPushHost(hostname) {
+  if (ALLOWED_PUSH_HOSTS.has(hostname)) return true;
+  return hostname.endsWith(".push.apple.com") || hostname.endsWith(".notify.windows.com");
+}
+
+function isBase64UrlToken(value, minLength, maxLength) {
+  return value.length >= minLength && value.length <= maxLength && /^[a-zA-Z0-9_-]+$/.test(value);
 }
 
 function normaliseTimeZone(timeZone) {
@@ -379,7 +535,7 @@ function normaliseTimeZone(timeZone) {
 }
 
 function getScheduleKey(endpointHash, scheduleId) {
-  return `${SCHEDULE_PREFIX}${endpointHash}:${scheduleId}`;
+  return `${SCHEDULE_PREFIX}${endpointHash}:${normaliseScheduleId(scheduleId)}`;
 }
 
 function cleanName(value) {

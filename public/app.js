@@ -17,6 +17,7 @@ const DEFAULT_DELAY_MINUTES = 10;
 const MIN_DELAY_MINUTES = 0;
 const MAX_DELAY_MINUTES = 60;
 const SCHEDULE_STORAGE_KEY = "live-tfl-arrivals-schedules";
+const PUSH_DEVICE_TOKEN_STORAGE_KEY = "live-tfl-arrivals-push-device-token";
 const SCHEDULE_CATCHUP_MS = 15 * 60 * 1000;
 const READING_BUS_PROVIDER = "reading-buses";
 const SCHEDULE_WEEKDAYS = [
@@ -2257,6 +2258,33 @@ function createScheduleId() {
   return `schedule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function getPushDeviceToken() {
+  let token = window.localStorage.getItem(PUSH_DEVICE_TOKEN_STORAGE_KEY) || "";
+  if (/^[a-zA-Z0-9_-]{32,160}$/.test(token)) return token;
+
+  if (window.crypto?.randomUUID) {
+    token = `${window.crypto.randomUUID()}${window.crypto.randomUUID()}`.replaceAll("-", "");
+  } else if (window.crypto?.getRandomValues) {
+    const bytes = window.crypto.getRandomValues(new Uint8Array(32));
+    token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  } else {
+    token = `device-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  window.localStorage.setItem(PUSH_DEVICE_TOKEN_STORAGE_KEY, token);
+  return token;
+}
+
+function getSameOriginPath(value) {
+  try {
+    const url = new URL(value || "/", window.location.origin);
+    if (url.origin !== window.location.origin) return "/";
+    return `${url.pathname}${url.search}${url.hash}` || "/";
+  } catch {
+    return "/";
+  }
+}
+
 async function initServerPush() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
     refreshSchedulerUi();
@@ -2315,7 +2343,11 @@ async function syncScheduleToServer(schedule) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subscription: state.serverPushSubscription.toJSON(),
-        schedule,
+        schedule: {
+          ...schedule,
+          pageUrl: getSameOriginPath(schedule.pageUrl || window.location.href),
+        },
+        clientToken: getPushDeviceToken(),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/London",
       }),
     });
@@ -2339,6 +2371,7 @@ async function syncDeletedScheduleToServer(schedule) {
       body: JSON.stringify({
         endpoint: state.serverPushSubscription.endpoint,
         scheduleId: schedule.id,
+        clientToken: getPushDeviceToken(),
       }),
     });
   } catch (error) {
@@ -2395,8 +2428,9 @@ async function sendTestNotification() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subscription: state.serverPushSubscription.toJSON(),
+        clientToken: getPushDeviceToken(),
         title,
-        url: state.schedulerDraft?.pageUrl || window.location.href,
+        url: getSameOriginPath(state.schedulerDraft?.pageUrl || window.location.href),
       }),
     });
     if (response.ok) {
