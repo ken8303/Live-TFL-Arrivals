@@ -47,7 +47,7 @@ button {
 .app-shell {
   width: min(1120px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 28px 0 42px;
+  padding: 28px 0 calc(118px + env(safe-area-inset-bottom));
 }
 
 .topbar {
@@ -93,31 +93,59 @@ h1 {
 }
 
 .page-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 6px;
-  margin-bottom: 14px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  max-width: 560px;
+  padding: 8px;
+  margin: 0 auto;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(217, 224, 234, 0.92);
+  border-radius: 18px;
+  box-shadow: 0 16px 42px rgba(21, 32, 43, 0.18);
+  backdrop-filter: blur(18px);
 }
 
 .nav-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   min-width: 0;
-  min-height: 40px;
-  padding: 0 16px;
+  min-height: 58px;
+  padding: 7px 8px;
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 13px;
+  font-size: 0.74rem;
   font-weight: 900;
+  line-height: 1;
 }
 
 .nav-tab.active {
-  color: #fff;
-  background: var(--blue);
+  color: var(--blue);
+  background: rgba(0, 94, 184, 0.1);
+}
+
+.nav-icon {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.25;
+}
+
+.nav-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-tab:focus-visible {
@@ -575,7 +603,12 @@ select:focus {
 
 .weekday-pill input {
   position: absolute;
+  width: 1px !important;
+  min-width: 0;
+  height: 1px !important;
+  min-height: 0;
   opacity: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -897,17 +930,9 @@ select:focus {
     padding-top: 16px;
   }
 
-  .page-nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .nav-tab {
-    width: 100%;
-    padding: 0 10px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-height: 56px;
+    padding: 7px 4px;
   }
 
   .topbar,

@@ -12,7 +12,7 @@
     <link rel="manifest" href="manifest.webmanifest?v=2026-06-08-pwa" />
     <link rel="icon" href="icon.svg?v=2026-06-08-pwa" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg?v=2026-06-08-pwa" />
-    <link rel="stylesheet" href="styles.css?v=2026-06-10-mobilefix" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-10-bottomnav2" />
   </head>
   <body>
     <main class="app-shell">
@@ -31,10 +31,34 @@
       </section>
 
       <nav class="page-nav" aria-label="Page navigation">
-        <button class="nav-tab active" id="liveNavButton" type="button" aria-pressed="true">Live</button>
-        <button class="nav-tab" id="selectNavButton" type="button" aria-pressed="false">Select bus stop</button>
-        <button class="nav-tab" id="selectTrainNavButton" type="button" aria-pressed="false">Select train station</button>
-        <button class="nav-tab" id="schedulerNavButton" type="button" aria-pressed="false">Scheduler</button>
+        <button class="nav-tab active" id="liveNavButton" type="button" aria-pressed="true">
+          <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 18V8a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v10" />
+            <path d="M7 18h10M8 21h.01M16 21h.01M7 9h10M7 14h10" />
+          </svg>
+          <span class="nav-label">Live</span>
+        </button>
+        <button class="nav-tab" id="selectNavButton" type="button" aria-pressed="false">
+          <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M7 4h10a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3Z" />
+            <path d="M8 8h8M8 12h8M8 18v2M16 18v2" />
+          </svg>
+          <span class="nav-label">Bus</span>
+        </button>
+        <button class="nav-tab" id="selectTrainNavButton" type="button" aria-pressed="false">
+          <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M8 3h8a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z" />
+            <path d="M8 8h8M8 13h8M8 21l2-2M16 19l2 2" />
+          </svg>
+          <span class="nav-label">Train</span>
+        </button>
+        <button class="nav-tab" id="schedulerNavButton" type="button" aria-pressed="false">
+          <svg class="nav-icon" aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M7 3v3M17 3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
+            <path d="M9 14h.01M12 14h.01M15 14h.01M9 17h.01M12 17h.01" />
+          </svg>
+          <span class="nav-label">Scheduler</span>
+        </button>
       </nav>
 
       <section class="status-panel" aria-live="polite">
