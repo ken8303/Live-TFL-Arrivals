@@ -27,3 +27,12 @@ export async function fetchReadingJson(path, env, requestUrl) {
   }
   return response.json();
 }
+
+export async function fetchReadingText(path, env, requestUrl) {
+  const url = buildReadingApiUrl(path, env, requestUrl);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Reading Buses request failed with status ${response.status}.`);
+  }
+  return response.text();
+}

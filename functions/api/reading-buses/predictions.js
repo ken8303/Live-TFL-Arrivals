@@ -1,4 +1,4 @@
-import { fetchReadingJson } from "./shared.js";
+import { fetchReadingText } from "./shared.js";
 
 export async function onRequestGet({ env, request }) {
   try {
@@ -12,7 +12,7 @@ export async function onRequestGet({ env, request }) {
       );
     }
 
-    const data = await fetchReadingJson("/siri-sm", env, request.url);
+    const data = await fetchReadingText("/siri-sm", env, request.url);
     return Response.json({
       source: "Reading Buses Open Data",
       location: url.searchParams.get("location"),
@@ -30,11 +30,63 @@ export async function onRequestGet({ env, request }) {
 }
 
 function normaliseReadingPredictions(payload) {
+  if (typeof payload === "string") {
+    return normaliseReadingSiriXml(payload);
+  }
+
   const items = findPredictionItems(payload);
   return items
     .map((item) => normalisePrediction(item))
     .filter(Boolean)
     .sort((a, b) => a.timeToStation - b.timeToStation);
+}
+
+function normaliseReadingSiriXml(xml) {
+  return [...xml.matchAll(/<MonitoredStopVisit\b[\s\S]*?<\/MonitoredStopVisit>/gi)]
+    .map((match) => normaliseSiriVisit(match[0]))
+    .filter(Boolean)
+    .sort((a, b) => a.timeToStation - b.timeToStation);
+}
+
+function normaliseSiriVisit(visitXml) {
+  const expectedTime =
+    getXmlText(visitXml, "ExpectedDepartureTime") ||
+    getXmlText(visitXml, "ExpectedArrivalTime") ||
+    getXmlText(visitXml, "AimedDepartureTime") ||
+    getXmlText(visitXml, "AimedArrivalTime");
+  const timeToStation = getSecondsUntil(expectedTime);
+  if (!Number.isFinite(timeToStation)) return null;
+
+  return {
+    modeName: "bus",
+    lineId: getXmlText(visitXml, "LineRef") || getXmlText(visitXml, "PublishedLineName") || "bus",
+    lineName: getXmlText(visitXml, "PublishedLineName") || getXmlText(visitXml, "LineRef") || "Bus",
+    destinationName: getXmlText(visitXml, "DestinationName") || getXmlText(visitXml, "DestinationRef") || "Destination",
+    platformName: getXmlText(visitXml, "StopPointName") || "",
+    expectedArrival: expectedTime,
+    timeToStation,
+  };
+}
+
+function getXmlText(xml, tagName) {
+  const match = xml.match(new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"));
+  if (!match) return "";
+  return decodeXml(match[1].replace(/<[^>]+>/g, "").trim());
+}
+
+function getSecondsUntil(value) {
+  const parsedTime = Date.parse(value);
+  if (!Number.isFinite(parsedTime)) return Number.NaN;
+  return Math.max(0, Math.round((parsedTime - Date.now()) / 1000));
+}
+
+function decodeXml(value) {
+  return String(value)
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
 }
 
 function findPredictionItems(payload) {
