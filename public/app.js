@@ -412,7 +412,7 @@ async function loadNearby(location) {
     if (!stops.length && !stations.length) {
       stopGrid.innerHTML = "";
       stationGrid.innerHTML = "";
-      setStatus(`No TfL ${formatSelectedModes(options)} were found nearby. Try a London location.`, "error");
+      setStatus(`No ${formatSelectedModes(options)} were found nearby. TfL and Reading Buses were both checked.`, "error");
       return;
     }
 
@@ -805,7 +805,7 @@ async function findClosestBusStops(location, targetCount) {
       targetCount,
       candidateCount: CANDIDATE_BUS_STOPS,
     }),
-    findNearbyReadingBusStops(location, 1500, CANDIDATE_BUS_STOPS),
+    findNearbyReadingBusStops(location, 2500, CANDIDATE_BUS_STOPS),
   ]);
   return [...tflStops, ...readingStops]
     .sort((a, b) => (a.distance ?? Number.MAX_VALUE) - (b.distance ?? Number.MAX_VALUE))

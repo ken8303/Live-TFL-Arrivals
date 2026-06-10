@@ -70,7 +70,7 @@ async function fetchReadingBusStops(env) {
   }
 
   const data = await response.json();
-  const items = Array.isArray(data) ? data : data.data || data.busstops || data.busStops || [];
+  const items = findReadingStopItems(data);
 
   return dedupeById(items.map(normaliseReadingBusStop))
     .filter((stop) => stop.id || stop.naptanId)
@@ -154,6 +154,11 @@ function normaliseReadingBusStop(stop) {
         stop.atcoCode ||
         stop.smscode ||
         stop.smsCode ||
+        stop.sms_code ||
+        stop.stop_code ||
+        stop.stopCode ||
+        stop.location ||
+        stop.Location ||
         stop.code ||
         "",
     ),
@@ -162,6 +167,8 @@ function normaliseReadingBusStop(stop) {
         stop.naptan_id ||
         stop.atco_code ||
         stop.atcoCode ||
+        stop.ATCOCode ||
+        stop.atco ||
         stop.stop_id ||
         stop.stopId ||
         stop.id ||
@@ -173,17 +180,47 @@ function normaliseReadingBusStop(stop) {
       stop.name ||
       stop.stop_name ||
       stop.stopName ||
+      stop.StopName ||
+      stop.description ||
       "Unnamed Reading bus stop",
     stopLetter: stop.stopLetter || stop.stop_letter || stop.indicator || "",
     indicator: stop.indicator || stop.towards || "",
-    lat: toNumber(stop.lat ?? stop.latitude),
-    lon: toNumber(stop.lon ?? stop.lng ?? stop.longitude),
+    lat: toNumber(stop.lat ?? stop.latitude ?? stop.Latitude ?? stop.y ?? stop.Y),
+    lon: toNumber(stop.lon ?? stop.lng ?? stop.longitude ?? stop.Longitude ?? stop.x ?? stop.X),
     additionalProperties: Object.entries(stop || {}).map(([key, value]) => ({
       key,
       value: value == null ? "" : String(value),
     })),
     provider: "reading-buses",
   };
+}
+
+function findReadingStopItems(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+
+  const namedCollections = [
+    value.data,
+    value.busstops,
+    value.busStops,
+    value.bus_stops,
+    value.stops,
+    value.StopPoints,
+    value.stopPoints,
+    value.items,
+    value.results,
+    value.result,
+  ];
+
+  for (const collection of namedCollections) {
+    const items = findReadingStopItems(collection);
+    if (items.length) return items;
+  }
+
+  return Object.values(value).reduce((best, child) => {
+    const items = findReadingStopItems(child);
+    return items.length > best.length ? items : best;
+  }, []);
 }
 
 function getAdditionalProperty(stop, key) {
