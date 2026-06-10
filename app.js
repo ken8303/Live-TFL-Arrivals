@@ -125,6 +125,9 @@ const state = {
   savedSchedules: [],
   schedulerTimer: null,
   schedulerTimeoutAt: null,
+  serverPushConfigured: false,
+  serverPushPublicKey: "",
+  serverPushSubscription: null,
   readingBusCatalog: null,
   readingBusCatalogLoaded: false,
 };
@@ -284,6 +287,7 @@ loadSavedSchedules();
 restoreFromUrl();
 startAutoRefresh();
 registerServiceWorker();
+initServerPush();
 registerSchedulerWakeHandlers();
 refreshSchedulerUi();
 scheduleSavedNotifications();
@@ -2061,11 +2065,9 @@ function refreshSchedulerUi() {
     : "The scheduler keeps the selected stop, route, line, and destination.";
 
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true;
-  notificationSupportText.textContent = standalone
-    ? "This web app is running like an installed app. You can enable notifications here."
-    : "Add this app to your Home Screen on iPhone or iPad for the best Apple Web App notification support.";
+  notificationSupportText.textContent = getNotificationSupportMessage(standalone);
   notificationPermissionText.textContent = getNotificationPermissionMessage();
-  enableNotificationsButton.disabled = !("Notification" in window);
+  enableNotificationsButton.disabled = !("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window);
   testNotificationButton.disabled = !("Notification" in window) || Notification.permission !== "granted";
   saveScheduleButton.disabled = !draft;
 
@@ -2075,9 +2077,21 @@ function refreshSchedulerUi() {
 
 function getNotificationPermissionMessage() {
   if (!("Notification" in window)) return "This browser does not support web notifications.";
+  if (!("PushManager" in window)) return "This browser does not support server push notifications.";
+  if (!state.serverPushConfigured) return "Server push is not configured in Cloudflare yet. Local notifications can still work while the app is open.";
+  if (state.serverPushSubscription) return "Server push notifications are enabled for this device.";
   if (Notification.permission === "granted") return "Notifications are enabled for this web app.";
   if (Notification.permission === "denied") return "Notifications are blocked. Change the browser setting to allow them again.";
   return "Notification permission not requested yet.";
+}
+
+function getNotificationSupportMessage(standalone) {
+  if (!state.serverPushConfigured) {
+    return "Server scheduled notifications need Cloudflare push storage and VAPID keys before they can run in the background.";
+  }
+  return standalone
+    ? "This installed web app can receive server scheduled notifications."
+    : "Add this app to your Home Screen on iPhone or iPad for the best Apple Web App notification support.";
 }
 
 function getSelectedWeekdaysFromForm() {
@@ -2090,7 +2104,7 @@ function getSelectedWeekdaysFromForm() {
     });
 }
 
-function saveCurrentSchedule() {
+async function saveCurrentSchedule() {
   if (!state.schedulerDraft) {
     setStatus("Open a bus stop or train station first, then tap Schedule.", "error");
     return;
@@ -2121,6 +2135,7 @@ function saveCurrentSchedule() {
   state.schedulerDraft = schedule;
   persistSavedSchedules();
   scheduleSavedNotifications();
+  await syncScheduleToServer(schedule);
   refreshSchedulerUi();
   updateBookmarkUrl();
   setStatus(`Saved scheduler reminder for ${schedule.title}.`, "ready");
@@ -2149,6 +2164,7 @@ function handleSavedSchedulesClick(event) {
       syncSchedulerFormFromDraft();
     }
     persistSavedSchedules();
+    syncDeletedScheduleToServer(schedule);
     scheduleSavedNotifications();
     refreshSchedulerUi();
     setStatus(`Removed scheduler reminder for ${schedule.title}.`, "ready");
@@ -2241,20 +2257,123 @@ function createScheduleId() {
   return `schedule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+async function initServerPush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    refreshSchedulerUi();
+    return;
+  }
+
+  try {
+    const config = await fetchJson("/api/push/public-key");
+    state.serverPushConfigured = Boolean(config.configured && config.publicKey);
+    state.serverPushPublicKey = config.publicKey || "";
+    if (!state.serverPushConfigured) {
+      refreshSchedulerUi();
+      return;
+    }
+
+    const registration = await waitForServiceWorkerReady();
+    state.serverPushSubscription = await registration.pushManager.getSubscription();
+    if (state.serverPushSubscription && state.savedSchedules.length) {
+      await syncAllSchedulesToServer();
+    }
+    refreshSchedulerUi();
+  } catch (error) {
+    console.warn("Server push setup could not be checked", error);
+    state.serverPushConfigured = false;
+    refreshSchedulerUi();
+  }
+}
+
+async function subscribeToServerPush() {
+  if (!state.serverPushConfigured || !state.serverPushPublicKey) return null;
+
+  const registration = await waitForServiceWorkerReady();
+  state.serverPushSubscription = await registration.pushManager.getSubscription();
+  if (!state.serverPushSubscription) {
+    state.serverPushSubscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(state.serverPushPublicKey),
+    });
+  }
+
+  await syncAllSchedulesToServer();
+  return state.serverPushSubscription;
+}
+
+async function syncAllSchedulesToServer() {
+  if (!state.serverPushSubscription) return;
+  await Promise.all(state.savedSchedules.map((schedule) => syncScheduleToServer(schedule)));
+}
+
+async function syncScheduleToServer(schedule) {
+  if (!state.serverPushConfigured || !state.serverPushSubscription) return;
+
+  try {
+    const response = await fetch("/api/push/schedules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscription: state.serverPushSubscription.toJSON(),
+        schedule,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/London",
+      }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Server push sync failed with status ${response.status}.`);
+    }
+  } catch (error) {
+    console.warn("Could not sync schedule to server push", error);
+    setStatus("Schedule saved on this device. Server push could not be synced yet.", "waiting");
+  }
+}
+
+async function syncDeletedScheduleToServer(schedule) {
+  if (!state.serverPushSubscription || !schedule?.id) return;
+
+  try {
+    await fetch("/api/push/schedules/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: state.serverPushSubscription.endpoint,
+        scheduleId: schedule.id,
+      }),
+    });
+  } catch (error) {
+    console.warn("Could not delete server push schedule", error);
+  }
+}
+
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = `${value}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
 async function requestNotificationPermission() {
   if (!("Notification" in window)) {
     setStatus("This browser does not support web notifications.", "error");
     refreshSchedulerUi();
     return;
   }
-
-  const permission = await Notification.requestPermission();
-  refreshSchedulerUi();
-  if (permission === "granted") {
-    setStatus("Notifications enabled for this web app.", "ready");
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    setStatus("This browser does not support server push notifications.", "error");
+    refreshSchedulerUi();
     return;
   }
 
+  const permission = await Notification.requestPermission();
+  if (permission === "granted") {
+    await subscribeToServerPush();
+    refreshSchedulerUi();
+    setStatus(state.serverPushSubscription ? "Server push notifications enabled for this device." : "Notifications enabled for this web app.", "ready");
+    return;
+  }
+
+  refreshSchedulerUi();
   setStatus("Notification permission was not granted.", "error");
 }
 
@@ -2270,6 +2389,22 @@ async function sendTestNotification() {
   }
 
   const title = state.schedulerDraft?.title || "Live TfL Arrivals";
+  if (state.serverPushSubscription) {
+    const response = await fetch("/api/push/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscription: state.serverPushSubscription.toJSON(),
+        title,
+        url: state.schedulerDraft?.pageUrl || window.location.href,
+      }),
+    });
+    if (response.ok) {
+      setStatus("Server test notification sent.", "ready");
+      return;
+    }
+  }
+
   await showAppNotification(title, "Test notification sent from the scheduler.", state.schedulerDraft?.pageUrl || window.location.href);
   setStatus("Test notification sent.", "ready");
 }

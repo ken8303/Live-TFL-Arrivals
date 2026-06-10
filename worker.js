@@ -4,8 +4,15 @@ import { onRequestGet as getBusStopsCatalog } from "./functions/api/catalog/bus-
 import { onRequestGet as getTrainStationsCatalog } from "./functions/api/catalog/train-stations.js";
 import { onRequestGet as getReadingBusPredictions } from "./functions/api/reading-buses/predictions.js";
 import { onRequestGet as getReadingBusLines } from "./functions/api/reading-buses/lines.js";
+import {
+  deletePushSchedule,
+  getPushPublicKey,
+  runScheduledPush,
+  savePushSchedule,
+  sendPushTest,
+} from "./functions/api/push.js";
 
-const APP_VERSION = "2026-06-10-readingpredictions";
+const APP_VERSION = "2026-06-10-serverpush";
 
 export default {
   async fetch(request, env) {
@@ -35,6 +42,22 @@ export default {
       return withVersionHeader(await getReadingBusLines({ request, env }));
     }
 
+    if (url.pathname === "/api/push/public-key") {
+      return withVersionHeader(await getPushPublicKey({ request, env }));
+    }
+
+    if (url.pathname === "/api/push/schedules" && request.method === "POST") {
+      return withVersionHeader(await savePushSchedule({ request, env }));
+    }
+
+    if (url.pathname === "/api/push/schedules/delete" && request.method === "POST") {
+      return withVersionHeader(await deletePushSchedule({ request, env }));
+    }
+
+    if (url.pathname === "/api/push/test" && request.method === "POST") {
+      return withVersionHeader(await sendPushTest({ request, env }));
+    }
+
     if (url.pathname === "/api/version") {
       return withVersionHeader(
         Response.json({
@@ -45,6 +68,10 @@ export default {
     }
 
     return withVersionHeader(await env.ASSETS.fetch(request));
+  },
+
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(runScheduledPush(controller, env));
   },
 };
 

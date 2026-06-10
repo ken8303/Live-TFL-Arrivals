@@ -12,7 +12,7 @@
     <link rel="manifest" href="manifest.webmanifest?v=2026-06-08-pwa" />
     <link rel="icon" href="icon.svg?v=2026-06-08-pwa" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg?v=2026-06-08-pwa" />
-    <link rel="stylesheet" href="styles.css?v=2026-06-10-readingfallback" />
+    <link rel="stylesheet" href="styles.css?v=2026-06-10-serverpush" />
   </head>
   <body>
     <main class="app-shell">
@@ -321,7 +321,7 @@
                 <li>No schedule selected yet.</li>
               </ol>
               <p class="scheduler-help">
-                This first version can show notifications while the web app is active. Full background scheduled delivery on Apple devices needs server Web Push.
+                Server push can send these reminders in the background after notifications are enabled.
               </p>
             </section>
           </div>
@@ -352,6 +352,6 @@
       </a>
     </template>
 
-    <script src="app.js?v=2026-06-10-readingfallback"></script>
+    <script src="app.js?v=2026-06-10-serverpush"></script>
   </body>
 </html>

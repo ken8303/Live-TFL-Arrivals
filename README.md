@@ -78,4 +78,32 @@ NATIONAL_RAIL_USERNAME
 NATIONAL_RAIL_PASSWORD
 ```
 
+## Server Push Notifications
+
+The Scheduler page can send background Web Push notifications from Cloudflare Workers. Browser-only notifications still work while the app is open, but server push needs Cloudflare storage and VAPID keys.
+
+Create a KV namespace in Cloudflare and bind it to the Worker as:
+
+```text
+PUSH_SCHEDULES
+```
+
+Also add these Worker secrets:
+
+```text
+VAPID_PUBLIC_KEY
+VAPID_PRIVATE_JWK
+VAPID_SUBJECT
+```
+
+`VAPID_PUBLIC_KEY` is the public application server key used by the browser Push API. `VAPID_PRIVATE_JWK` must be the matching private P-256 JSON Web Key and must stay in Cloudflare secrets only. `VAPID_SUBJECT` should be a contact value such as `mailto:you@example.com`.
+
+You can generate matching values with:
+
+```sh
+node scripts/generate-vapid-keys.mjs
+```
+
+The Worker runs the scheduler every minute using the cron trigger in `wrangler.jsonc`.
+
 Then redeploy the Pages project from the latest GitHub commit.

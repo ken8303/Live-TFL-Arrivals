@@ -1,9 +1,9 @@
-const STATIC_CACHE = "live-tfl-arrivals-static-v5";
+const STATIC_CACHE = "live-tfl-arrivals-static-v6";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/styles.css?v=2026-06-10-readingfallback",
-  "/app.js?v=2026-06-10-readingfallback",
+  "/styles.css?v=2026-06-10-serverpush",
+  "/app.js?v=2026-06-10-serverpush",
   "/manifest.webmanifest?v=2026-06-08-pwa",
   "/icon.svg?v=2026-06-08-pwa",
   "/icon-maskable.svg?v=2026-06-08-pwa",
@@ -64,4 +64,28 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl = event.notification.data?.url || "/";
   event.waitUntil(clients.openWindow(targetUrl));
+});
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data?.json() || {};
+  } catch {
+    payload = {
+      title: "Live TfL Arrivals",
+      body: event.data?.text() || "Your scheduled transport reminder is ready.",
+    };
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || "Live TfL Arrivals", {
+      body: payload.body || "Your scheduled transport reminder is ready.",
+      icon: "/icon.svg?v=2026-06-08-pwa",
+      badge: "/icon-maskable.svg?v=2026-06-08-pwa",
+      tag: "live-tfl-arrivals-server-schedule",
+      data: {
+        url: payload.url || "/?page=scheduler",
+      },
+    }),
+  );
 });
