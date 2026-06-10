@@ -5,7 +5,7 @@ import { onRequestGet as getTrainStationsCatalog } from "./functions/api/catalog
 import { onRequestGet as getReadingBusPredictions } from "./functions/api/reading-buses/predictions.js";
 import { onRequestGet as getReadingBusLines } from "./functions/api/reading-buses/lines.js";
 
-const APP_VERSION = "2026-06-09-readingbus";
+const APP_VERSION = "2026-06-10-schedulerfix";
 
 export default {
   async fetch(request, env) {

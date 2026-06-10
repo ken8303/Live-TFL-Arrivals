@@ -17,6 +17,7 @@ const DEFAULT_DELAY_MINUTES = 10;
 const MIN_DELAY_MINUTES = 0;
 const MAX_DELAY_MINUTES = 60;
 const SCHEDULE_STORAGE_KEY = "live-tfl-arrivals-schedules";
+const SCHEDULE_CATCHUP_MS = 15 * 60 * 1000;
 const READING_BUS_PROVIDER = "reading-buses";
 const SCHEDULE_WEEKDAYS = [
   { value: 1, label: "Mon", longLabel: "Monday" },
@@ -283,6 +284,7 @@ loadSavedSchedules();
 restoreFromUrl();
 startAutoRefresh();
 registerServiceWorker();
+registerSchedulerWakeHandlers();
 refreshSchedulerUi();
 scheduleSavedNotifications();
 
@@ -2274,18 +2276,33 @@ async function sendTestNotification() {
 
 async function showAppNotification(title, body, url) {
   if ("serviceWorker" in navigator) {
-    const registration = await navigator.serviceWorker.ready;
-    await registration.showNotification(title, {
-      body,
-      icon: "./icon.svg",
-      badge: "./icon-maskable.svg",
-      tag: "live-tfl-arrivals-schedule",
-      data: { url },
-    });
-    return;
+    try {
+      const registration = await waitForServiceWorkerReady();
+      if (registration?.showNotification) {
+        await registration.showNotification(title, {
+          body,
+          icon: "./icon.svg",
+          badge: "./icon-maskable.svg",
+          tag: "live-tfl-arrivals-schedule",
+          data: { url },
+        });
+        return;
+      }
+    } catch (error) {
+      console.warn("Service worker notification failed, falling back to Notification()", error);
+    }
   }
 
   new Notification(title, { body });
+}
+
+function waitForServiceWorkerReady(timeoutMs = 2500) {
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error("Service worker was not ready in time.")), timeoutMs);
+    }),
+  ]);
 }
 
 function scheduleSavedNotifications() {
@@ -2302,7 +2319,10 @@ function scheduleSavedNotifications() {
     .filter((item) => item.nextAt)
     .sort((a, b) => a.nextAt - b.nextAt)[0];
 
-  if (!nextDue) return;
+  if (!nextDue) {
+    state.schedulerTimeoutAt = null;
+    return;
+  }
 
   const delay = Math.max(1000, nextDue.nextAt.getTime() - Date.now());
   state.schedulerTimeoutAt = nextDue.nextAt.getTime();
@@ -2314,15 +2334,47 @@ function scheduleSavedNotifications() {
 
 async function runDueSchedules() {
   const now = new Date();
-  const windowStart = new Date(now.getTime() - 60 * 1000);
-  const dueSchedules = state.savedSchedules.filter((schedule) => {
-    const dueAt = getNextScheduleTimes(schedule, 1, windowStart)[0];
-    return dueAt && dueAt.getTime() <= now.getTime();
-  });
+  let changed = false;
+  const dueSchedules = state.savedSchedules
+    .map((schedule) => ({
+      schedule,
+      dueAt: getPreviousScheduleTime(schedule, now),
+    }))
+    .filter(({ schedule, dueAt }) => {
+      if (!dueAt) return false;
+      if (now.getTime() - dueAt.getTime() > SCHEDULE_CATCHUP_MS) return false;
+      return dueAt.getTime() > Number(schedule.lastFiredAt || 0);
+    });
 
-  for (const schedule of dueSchedules) {
+  for (const { schedule, dueAt } of dueSchedules) {
     await sendScheduleNotification(schedule);
+    schedule.lastFiredAt = dueAt.getTime();
+    changed = true;
   }
+
+  if (changed) {
+    persistSavedSchedules();
+    renderSavedSchedules();
+  }
+}
+
+function getPreviousScheduleTime(schedule, fromDate = new Date()) {
+  const [hourText, minuteText] = (schedule.time || "08:00").split(":");
+  const hour = Number.parseInt(hourText, 10);
+  const minute = Number.parseInt(minuteText, 10);
+  const weekdays = new Set(schedule.weekdays || []);
+
+  for (let offset = 0; offset < 14; offset += 1) {
+    const candidate = new Date(fromDate);
+    candidate.setSeconds(0, 0);
+    candidate.setDate(fromDate.getDate() - offset);
+    candidate.setHours(hour, minute, 0, 0);
+    if (!weekdays.has(candidate.getDay())) continue;
+    if (candidate > fromDate) continue;
+    return candidate;
+  }
+
+  return null;
 }
 
 async function sendScheduleNotification(schedule) {
@@ -2382,6 +2434,21 @@ function startAutoRefresh() {
 
     updateRefreshCountdown();
   }, 1000);
+}
+
+function registerSchedulerWakeHandlers() {
+  const checkSchedules = () => {
+    runDueSchedules().finally(() => {
+      scheduleSavedNotifications();
+      if (state.activePage === "scheduler") refreshSchedulerUi();
+    });
+  };
+
+  window.addEventListener("focus", checkSchedules);
+  window.addEventListener("pageshow", checkSchedules);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkSchedules();
+  });
 }
 
 function registerServiceWorker() {
