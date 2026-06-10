@@ -179,6 +179,7 @@ function normaliseReadingBusStop(stop) {
     stop.stopCode ||
     stop.location ||
     stop.Location ||
+    stop.location_code ||
     stop.locationCode ||
     stop.LocationCode ||
     stop.code ||
@@ -194,6 +195,9 @@ function normaliseReadingBusStop(stop) {
         stop.atcoCode ||
         stop.ATCOCode ||
         stop.atco ||
+        stop.location_code ||
+        stop.locationCode ||
+        stop.LocationCode ||
         stop.stop_id ||
         stop.stopId ||
         stop.id ||
@@ -212,7 +216,7 @@ function normaliseReadingBusStop(stop) {
       stop.description ||
       stop.Description ||
       "Unnamed Reading bus stop",
-    stopLetter: stop.stopLetter || stop.stop_letter || stop.indicator || "",
+    stopLetter: stop.stopLetter || stop.stop_letter || stop.bay_no || stop.bayNo || stop.indicator || "",
     indicator: stop.indicator || stop.towards || "",
     lat: toNumber(stop.lat ?? stop.latitude ?? stop.Latitude ?? stop.y ?? stop.Y ?? coordinates.lat),
     lon: toNumber(stop.lon ?? stop.lng ?? stop.longitude ?? stop.Longitude ?? stop.x ?? stop.X ?? coordinates.lon),
