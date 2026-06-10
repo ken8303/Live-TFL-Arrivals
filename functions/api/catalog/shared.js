@@ -72,8 +72,8 @@ async function fetchReadingBusStops(env) {
   const data = await response.json();
   const items = Array.isArray(data) ? data : data.data || data.busstops || data.busStops || [];
 
-  return dedupeById(items)
-    .map(normaliseReadingBusStop)
+  return dedupeById(items.map(normaliseReadingBusStop))
+    .filter((stop) => stop.id || stop.naptanId)
     .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon))
     .sort((a, b) => a.commonName.localeCompare(b.commonName) || (a.stopLetter || "").localeCompare(b.stopLetter || ""));
 }
