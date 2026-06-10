@@ -20,6 +20,21 @@ export async function getCachedReadingBusStops(env = {}) {
   return getCachedCatalog(readingBusCache, () => fetchReadingBusStops(env));
 }
 
+export async function getReadingBusStopsDebug(env = {}) {
+  const payload = await fetchReadingBusStopPayload(env);
+  const items = findReadingStopItems(payload);
+  const normalised = items.map(normaliseReadingBusStop);
+  return {
+    payloadType: Array.isArray(payload) ? "array" : typeof payload,
+    payloadKeys: payload && typeof payload === "object" && !Array.isArray(payload) ? Object.keys(payload).slice(0, 30) : [],
+    rawCount: items.length,
+    normalisedCount: normalised.length,
+    validCount: normalised.filter((stop) => (stop.id || stop.naptanId) && Number.isFinite(stop.lat) && Number.isFinite(stop.lon)).length,
+    sampleKeys: items.slice(0, 3).map((item) => item && typeof item === "object" ? Object.keys(item).slice(0, 30) : []),
+    sampleNormalised: normalised.slice(0, 3),
+  };
+}
+
 async function getCachedCatalog(cache, load) {
   const now = Date.now();
   if (cache.items && now - cache.updatedAt < DAY_MS) {
@@ -57,6 +72,16 @@ async function fetchTrainStations(env) {
 }
 
 async function fetchReadingBusStops(env) {
+  const data = await fetchReadingBusStopPayload(env);
+  const items = findReadingStopItems(data);
+
+  return dedupeById(items.map(normaliseReadingBusStop))
+    .filter((stop) => stop.id || stop.naptanId)
+    .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon))
+    .sort((a, b) => a.commonName.localeCompare(b.commonName) || (a.stopLetter || "").localeCompare(b.stopLetter || ""));
+}
+
+async function fetchReadingBusStopPayload(env) {
   if (!env.READING_OPEN_DATA_API_TOKEN) {
     throw new Error("Add READING_OPEN_DATA_API_TOKEN to load Reading bus stops.");
   }
@@ -69,13 +94,7 @@ async function fetchReadingBusStops(env) {
     throw new Error(`Reading bus stop request failed with status ${response.status}.`);
   }
 
-  const data = await response.json();
-  const items = findReadingStopItems(data);
-
-  return dedupeById(items.map(normaliseReadingBusStop))
-    .filter((stop) => stop.id || stop.naptanId)
-    .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon))
-    .sort((a, b) => a.commonName.localeCompare(b.commonName) || (a.stopLetter || "").localeCompare(b.stopLetter || ""));
+  return response.json();
 }
 
 async function fetchStopPointsByModes(modes, env) {
@@ -145,23 +164,29 @@ function normaliseTrainStation(stop) {
 }
 
 function normaliseReadingBusStop(stop) {
+  const coordinates = getReadingCoordinates(stop);
+  const id =
+    stop.id ||
+    stop.stop_id ||
+    stop.stopId ||
+    stop.atco_code ||
+    stop.atcoCode ||
+    stop.ATCOCode ||
+    stop.smscode ||
+    stop.smsCode ||
+    stop.sms_code ||
+    stop.stop_code ||
+    stop.stopCode ||
+    stop.location ||
+    stop.Location ||
+    stop.locationCode ||
+    stop.LocationCode ||
+    stop.code ||
+    stop.Code ||
+    "";
+
   return {
-    id: String(
-      stop.id ||
-        stop.stop_id ||
-        stop.stopId ||
-        stop.atco_code ||
-        stop.atcoCode ||
-        stop.smscode ||
-        stop.smsCode ||
-        stop.sms_code ||
-        stop.stop_code ||
-        stop.stopCode ||
-        stop.location ||
-        stop.Location ||
-        stop.code ||
-        "",
-    ),
+    id: String(id),
     naptanId: String(
       stop.naptanId ||
         stop.naptan_id ||
@@ -172,6 +197,7 @@ function normaliseReadingBusStop(stop) {
         stop.stop_id ||
         stop.stopId ||
         stop.id ||
+        id ||
         "",
     ),
     commonName:
@@ -181,12 +207,15 @@ function normaliseReadingBusStop(stop) {
       stop.stop_name ||
       stop.stopName ||
       stop.StopName ||
+      stop.stopDescription ||
+      stop.StopDescription ||
       stop.description ||
+      stop.Description ||
       "Unnamed Reading bus stop",
     stopLetter: stop.stopLetter || stop.stop_letter || stop.indicator || "",
     indicator: stop.indicator || stop.towards || "",
-    lat: toNumber(stop.lat ?? stop.latitude ?? stop.Latitude ?? stop.y ?? stop.Y),
-    lon: toNumber(stop.lon ?? stop.lng ?? stop.longitude ?? stop.Longitude ?? stop.x ?? stop.X),
+    lat: toNumber(stop.lat ?? stop.latitude ?? stop.Latitude ?? stop.y ?? stop.Y ?? coordinates.lat),
+    lon: toNumber(stop.lon ?? stop.lng ?? stop.longitude ?? stop.Longitude ?? stop.x ?? stop.X ?? coordinates.lon),
     additionalProperties: Object.entries(stop || {}).map(([key, value]) => ({
       key,
       value: value == null ? "" : String(value),
@@ -198,6 +227,7 @@ function normaliseReadingBusStop(stop) {
 function findReadingStopItems(value) {
   if (Array.isArray(value)) return value;
   if (!value || typeof value !== "object") return [];
+  if (looksLikeReadingStop(value)) return [value];
 
   const namedCollections = [
     value.data,
@@ -217,10 +247,65 @@ function findReadingStopItems(value) {
     if (items.length) return items;
   }
 
-  return Object.values(value).reduce((best, child) => {
+  const values = Object.values(value);
+  const stopValues = values.filter(looksLikeReadingStop);
+  if (stopValues.length) return stopValues;
+
+  return values.reduce((best, child) => {
     const items = findReadingStopItems(child);
     return items.length > best.length ? items : best;
   }, []);
+}
+
+function looksLikeReadingStop(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = new Set(Object.keys(value));
+  const hasId = [
+    "id",
+    "stop_id",
+    "stopId",
+    "atco_code",
+    "atcoCode",
+    "ATCOCode",
+    "smscode",
+    "smsCode",
+    "sms_code",
+    "location",
+    "Location",
+    "locationCode",
+    "LocationCode",
+    "code",
+    "Code",
+  ].some((key) => keys.has(key));
+  const hasName = [
+    "commonName",
+    "common_name",
+    "name",
+    "stop_name",
+    "stopName",
+    "StopName",
+    "description",
+    "Description",
+  ].some((key) => keys.has(key));
+  const coordinates = getReadingCoordinates(value);
+  return hasId && (hasName || (Number.isFinite(coordinates.lat) && Number.isFinite(coordinates.lon)));
+}
+
+function getReadingCoordinates(stop) {
+  const nested =
+    stop.coordinates ||
+    stop.Coordinates ||
+    stop.coordinate ||
+    stop.Coordinate ||
+    stop.position ||
+    stop.Position ||
+    stop.locationPoint ||
+    stop.LocationPoint ||
+    {};
+  return {
+    lat: toNumber(nested.lat ?? nested.latitude ?? nested.Latitude ?? nested.y ?? nested.Y),
+    lon: toNumber(nested.lon ?? nested.lng ?? nested.longitude ?? nested.Longitude ?? nested.x ?? nested.X),
+  };
 }
 
 function getAdditionalProperty(stop, key) {
