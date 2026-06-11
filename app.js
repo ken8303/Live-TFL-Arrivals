@@ -94,6 +94,24 @@ const TRAIN_STATIONS = [
     lines: [{ id: "elizabeth", name: "Elizabeth line" }],
   },
 ];
+const NATIONAL_RAIL_FALLBACK_STATIONS = [
+  { name: "Reading", crs: "RDG", lat: 51.459069, lon: -0.972051 },
+  { name: "Reading West", crs: "RDW", lat: 51.455578, lon: -0.99012 },
+  { name: "Tilehurst", crs: "TLH", lat: 51.47153, lon: -1.029842 },
+  { name: "Twyford", crs: "TWY", lat: 51.475528, lon: -0.863293 },
+  { name: "Maidenhead", crs: "MAI", lat: 51.51867, lon: -0.722626 },
+  { name: "Slough", crs: "SLO", lat: 51.511877, lon: -0.591499 },
+  { name: "Didcot Parkway", crs: "DID", lat: 51.610952, lon: -1.242886 },
+  { name: "Oxford", crs: "OXF", lat: 51.753496, lon: -1.270152 },
+  { name: "Newbury", crs: "NBY", lat: 51.397645, lon: -1.322877 },
+  { name: "Basingstoke", crs: "BSK", lat: 51.268356, lon: -1.087264 },
+  { name: "Wokingham", crs: "WKM", lat: 51.41124, lon: -0.842515 },
+  { name: "Bristol Temple Meads", crs: "BRI", lat: 51.449139, lon: -2.581315 },
+  { name: "Bath Spa", crs: "BTH", lat: 51.377683, lon: -2.357034 },
+  { name: "Cardiff Central", crs: "CDF", lat: 51.475953, lon: -3.178609 },
+  { name: "Birmingham New Street", crs: "BHM", lat: 52.477777, lon: -1.898842 },
+  { name: "Manchester Piccadilly", crs: "MAN", lat: 53.477356, lon: -2.230911 },
+];
 
 const state = {
   activePage: "live",
@@ -355,7 +373,10 @@ async function searchSelectionLocation(type, query) {
   const label = type === "bus" ? "bus stops" : "train stations";
   setStatus(`Searching for nearby ${label} around ${query}...`, "waiting");
   try {
-    const location = await lookupLocation(query);
+    const nationalRailStation = type === "train" ? getExactNationalRailFallbackStation(query) : null;
+    const location = nationalRailStation
+      ? { lat: nationalRailStation.lat, lon: nationalRailStation.lon, label: nationalRailStation.name }
+      : await lookupLocation(query);
     if (type === "bus") {
       busLocationInput.value = query;
       loadNearbyBusStopsForSelection(location);
@@ -434,7 +455,7 @@ async function loadNearby(location) {
     const candidatesWithDepartures = await Promise.all(
       stations.map(async (stop) => ({
         stop,
-        arrivals: await getArrivals(stop.id || stop.naptanId, "train"),
+        arrivals: await getLiveTrainArrivals(stop),
       })),
     );
     const liveStations = candidatesWithDepartures.filter(({ arrivals }) => arrivals.length > 0);
@@ -647,7 +668,7 @@ async function loadSelectedTrainStation(preferredLine = state.savedTrainLine) {
   updateBookmarkUrl();
 
   try {
-    const arrivals = await getStationTrainArrivals(station.id);
+    const arrivals = isNationalRailOnlyStation(station) ? [] : await getStationTrainArrivals(station.id);
     const lines = getArrivalLines(arrivals, station);
 
     if (!lines.length) {
@@ -880,22 +901,26 @@ async function searchBusStops(query) {
 }
 
 async function searchTrainStations(query) {
+  const nationalRailMatches = searchNationalRailFallbackStations(query, SELECTED_STOP_CANDIDATES);
+  if (nationalRailMatches.length) return nationalRailMatches;
+
   const postcodeLocation = await lookupPostcode(query);
   if (postcodeLocation) {
-    return findClosestPlaces({
+    const tflStops = await findClosestPlaces({
       ...postcodeLocation,
       stopTypes: "NaptanMetroStation,NaptanRailStation",
       modes: "tube,dlr,overground,elizabeth-line,national-rail,tram",
       targetCount: SELECTED_STOP_CANDIDATES,
       candidateCount: SELECTED_STOP_CANDIDATES,
     });
+    return mergeNearbyTrainStations(tflStops, findNearbyNationalRailFallbackStations(postcodeLocation, 1000));
   }
 
   const url = new URL(`${API_BASE}/StopPoint/Search/${encodeURIComponent(query)}`);
   url.searchParams.set("modes", "tube,dlr,overground,elizabeth-line,national-rail,tram");
   const data = await fetchJson(url);
 
-  return (data.matches || [])
+  const tflMatches = (data.matches || [])
     .filter(
       (match) =>
         match.id &&
@@ -913,6 +938,8 @@ async function searchTrainStations(query) {
       lines: [],
     }))
     .slice(0, SELECTED_STOP_CANDIDATES);
+
+  return mergeTrainStationOptions(tflMatches, nationalRailMatches).slice(0, SELECTED_STOP_CANDIDATES);
 }
 
 async function loadSearchedTrainStations(query, preferredStationId = null, preferredLine = state.savedTrainLine) {
@@ -1018,7 +1045,7 @@ async function findClosestStations(location, targetCount) {
     targetCount,
     candidateCount: CANDIDATE_STATIONS,
   });
-  return normalizeNearbyTrainStations(stops).slice(0, targetCount);
+  return mergeNearbyTrainStations(stops, findNearbyNationalRailFallbackStations(location, 1500)).slice(0, targetCount);
 }
 
 async function findNearbyTrainStationsWithin1km(location) {
@@ -1029,7 +1056,7 @@ async function findNearbyTrainStationsWithin1km(location) {
     radius: 1000,
     limit: 40,
   });
-  return normalizeNearbyTrainStations(stops);
+  return mergeNearbyTrainStations(stops, findNearbyNationalRailFallbackStations(location, 1000));
 }
 
 async function findStopsWithinRadius({ lat, lon, stopTypes, modes, radius, limit }) {
@@ -1100,6 +1127,14 @@ async function getStationTrainArrivals(stationId) {
   return arrivals
     .filter((arrival) => STATION_MODES.has(arrival.modeName))
     .sort((a, b) => a.timeToStation - b.timeToStation);
+}
+
+async function getLiveTrainArrivals(station) {
+  if (isNationalRailOnlyStation(station) && station.crs) {
+    return getNationalRailArrivals(station.crs, MAX_ARRIVALS);
+  }
+
+  return getArrivals(station.id || station.naptanId, "train");
 }
 
 async function getTrainArrivalsForLine(station, lineId) {
@@ -1635,7 +1670,7 @@ function getTrainStationIndex(value) {
   const asNumber = Number.parseInt(value, 10);
   const stations = state.availableTrainStations;
   if (Number.isInteger(asNumber) && stations[asNumber]) return asNumber;
-  return stations.findIndex((station) => station.id === value);
+  return stations.findIndex((station) => station.id === value || station.crs === value);
 }
 
 function trimCoordinate(value) {
@@ -1683,6 +1718,73 @@ function normalizeNearbyTrainStations(stops) {
   });
 
   return [...stationsById.values()].sort((a, b) => (a.distance ?? Number.MAX_VALUE) - (b.distance ?? Number.MAX_VALUE));
+}
+
+function makeNationalRailFallbackStation(station, distance = null) {
+  return {
+    id: `NR:${station.crs}`,
+    naptanId: `NR:${station.crs}`,
+    name: station.name,
+    commonName: station.name,
+    crs: station.crs,
+    lat: station.lat,
+    lon: station.lon,
+    distance,
+    lines: [{ id: "national-rail", name: "National Rail" }],
+    provider: "national-rail",
+  };
+}
+
+function searchNationalRailFallbackStations(query, limit) {
+  const normalisedQuery = String(query || "").replace(/\s+/g, " ").toLowerCase().replace(/\bstation\b/g, "").trim();
+  if (!normalisedQuery) return [];
+
+  return NATIONAL_RAIL_FALLBACK_STATIONS
+    .filter((station) => {
+      const name = station.name.toLowerCase();
+      const crs = station.crs.toLowerCase();
+      return crs === normalisedQuery || name.includes(normalisedQuery) || normalisedQuery.includes(name);
+    })
+    .map((station) => makeNationalRailFallbackStation(station))
+    .slice(0, limit);
+}
+
+function getExactNationalRailFallbackStation(query) {
+  const normalisedQuery = String(query || "").replace(/\s+/g, " ").toLowerCase().replace(/\bstation\b/g, "").trim();
+  if (!normalisedQuery) return null;
+  return NATIONAL_RAIL_FALLBACK_STATIONS.find((station) => station.crs.toLowerCase() === normalisedQuery || station.name.toLowerCase() === normalisedQuery) || null;
+}
+
+function findNearbyNationalRailFallbackStations(location, radius) {
+  return NATIONAL_RAIL_FALLBACK_STATIONS
+    .map((station) => ({
+      station,
+      distance: getDistanceMeters(location, station),
+    }))
+    .filter(({ distance }) => distance <= radius)
+    .sort((a, b) => a.distance - b.distance)
+    .map(({ station, distance }) => makeNationalRailFallbackStation(station, distance));
+}
+
+function mergeNearbyTrainStations(tflStops, nationalRailStations) {
+  return mergeTrainStationOptions(normalizeNearbyTrainStations(tflStops), nationalRailStations)
+    .sort((a, b) => (a.distance ?? Number.MAX_VALUE) - (b.distance ?? Number.MAX_VALUE));
+}
+
+function mergeTrainStationOptions(...stationGroups) {
+  const byKey = new Map();
+  stationGroups.flat().forEach((station) => {
+    const key = station.crs ? `crs:${station.crs}` : `id:${station.id}`;
+    const existing = byKey.get(key);
+    if (!existing || (station.distance ?? Number.MAX_VALUE) < (existing.distance ?? Number.MAX_VALUE)) {
+      byKey.set(key, station);
+    }
+  });
+  return [...byKey.values()];
+}
+
+function isNationalRailOnlyStation(station) {
+  return station?.provider === "national-rail" || (station?.crs && String(station.id || "").startsWith("NR:"));
 }
 
 function formatStopOption(stop) {
