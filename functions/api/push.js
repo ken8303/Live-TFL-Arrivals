@@ -9,7 +9,7 @@ const MAX_PUSH_LINES = 3;
 const MAX_SCHEDULES_PER_SUBSCRIPTION = 20;
 const MAX_SCHEDULE_PAGE_COUNT = 20;
 const MAX_SCHEDULE_BATCH_SIZE = 10;
-const SCHEDULE_CATCHUP_MINUTES = 5;
+const SCHEDULE_CATCHUP_MINUTES = 8;
 const LONDON_TIME_ZONE = "Europe/London";
 const ALLOWED_PUSH_HOSTS = new Set([
   "updates.push.services.mozilla.com",

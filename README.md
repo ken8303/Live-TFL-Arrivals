@@ -106,6 +106,6 @@ You can generate matching values with:
 node scripts/generate-vapid-keys.mjs
 ```
 
-The Worker runs the scheduler every minute using the cron trigger in `wrangler.jsonc`.
+The Worker runs the scheduler every 5 minutes using the cron trigger in `wrangler.jsonc`.
 
 Then redeploy the Pages project from the latest GitHub commit.
