@@ -88,6 +88,8 @@ Create a KV namespace in Cloudflare and bind it to the Worker as:
 PUSH_SCHEDULES
 ```
 
+The production namespace is also recorded in `wrangler.jsonc` so GitHub and Cloudflare deploys keep the same binding.
+
 Also add these Worker secrets:
 
 ```text

@@ -7,6 +7,12 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
+  "kv_namespaces": [
+    {
+      "binding": "PUSH_SCHEDULES",
+      "id": "916e7f94df974967bb1cf3fd67f4b72d"
+    }
+  ],
   "triggers": {
     "crons": ["* * * * *"]
   },
