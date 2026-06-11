@@ -3,7 +3,7 @@ import { onRequestGet as getReadingBusPredictions } from "./reading-buses/predic
 
 const API_BASE = "https://api.tfl.gov.uk";
 const SCHEDULE_PREFIX = "schedule:";
-const RATE_LIMIT_PREFIX = "push-rate:";
+const ENDPOINT_META_PREFIX = "endpoint-meta:";
 const DEFAULT_TTL_SECONDS = 60 * 60;
 const MAX_PUSH_LINES = 3;
 const MAX_SCHEDULES_PER_SUBSCRIPTION = 20;
@@ -30,7 +30,7 @@ export async function savePushSchedule({ request, env }) {
     return json({ error: "Server push storage is not configured." }, 501);
   }
 
-  const guard = await validateWriteRequest(request, env, { limit: 30 });
+  const guard = validateWriteRequest(request);
   if (guard) return guard;
 
   const payload = await request.json();
@@ -44,16 +44,18 @@ export async function savePushSchedule({ request, env }) {
   }
 
   const endpointHash = await sha256(subscription.endpoint);
-  const key = getScheduleKey(endpointHash, schedule.id);
-  const existing = await env.PUSH_SCHEDULES.get(key, "json");
+  const meta = await getEndpointMeta(env, endpointHash);
+  const key = getScheduleKey(endpointHash, schedule);
+  const existingKey = meta.schedules[schedule.id] || getLegacyScheduleKey(endpointHash, schedule.id);
+  const existing = existingKey ? await env.PUSH_SCHEDULES.get(existingKey, "json") : null;
   const clientTokenHash = await sha256(clientToken);
 
   if (existing?.clientTokenHash && existing.clientTokenHash !== clientTokenHash) {
     return json({ error: "This schedule belongs to another device." }, 403);
   }
 
-  const scheduleCount = await countSchedulesForEndpoint(env, endpointHash);
-  if (!existing && scheduleCount >= MAX_SCHEDULES_PER_SUBSCRIPTION) {
+  const isNewSchedule = !meta.schedules[schedule.id] && !existing;
+  if (isNewSchedule && meta.count >= MAX_SCHEDULES_PER_SUBSCRIPTION) {
     return json({ error: `Only ${MAX_SCHEDULES_PER_SUBSCRIPTION} server schedules can be saved on one device.` }, 429);
   }
 
@@ -68,6 +70,13 @@ export async function savePushSchedule({ request, env }) {
       updatedAt: new Date().toISOString(),
     }),
   );
+  if (existingKey && existingKey !== key) {
+    await env.PUSH_SCHEDULES.delete(existingKey);
+  }
+  meta.schedules[schedule.id] = key;
+  meta.count = Object.keys(meta.schedules).length;
+  meta.updatedAt = new Date().toISOString();
+  await putEndpointMeta(env, endpointHash, meta);
 
   return json({ ok: true, scheduleId: schedule.id });
 }
@@ -77,7 +86,7 @@ export async function deletePushSchedule({ request, env }) {
     return json({ ok: true, skipped: "Server push storage is not configured." });
   }
 
-  const guard = await validateWriteRequest(request, env, { limit: 30 });
+  const guard = validateWriteRequest(request);
   if (guard) return guard;
 
   const payload = await request.json();
@@ -89,17 +98,23 @@ export async function deletePushSchedule({ request, env }) {
   }
 
   const endpointHash = await sha256(endpoint);
-  const key = getScheduleKey(endpointHash, normaliseScheduleId(scheduleId));
+  const meta = await getEndpointMeta(env, endpointHash);
+  const normalisedScheduleId = normaliseScheduleId(scheduleId);
+  const key = meta.schedules[normalisedScheduleId] || getLegacyScheduleKey(endpointHash, normalisedScheduleId);
   const existing = await env.PUSH_SCHEDULES.get(key, "json");
   if (existing?.clientTokenHash && existing.clientTokenHash !== await sha256(clientToken)) {
     return json({ error: "This schedule belongs to another device." }, 403);
   }
   await env.PUSH_SCHEDULES.delete(key);
+  delete meta.schedules[normalisedScheduleId];
+  meta.count = Object.keys(meta.schedules).length;
+  meta.updatedAt = new Date().toISOString();
+  await putEndpointMeta(env, endpointHash, meta);
   return json({ ok: true });
 }
 
 export async function sendPushTest({ request, env }) {
-  const guard = await validateWriteRequest(request, env, { limit: 5 });
+  const guard = validateWriteRequest(request);
   if (guard) return guard;
 
   const payload = await request.json();
@@ -129,18 +144,20 @@ export async function runScheduledPush(_controller, env) {
   do {
     const page = await env.PUSH_SCHEDULES.list({ prefix: SCHEDULE_PREFIX, cursor, limit: MAX_SCHEDULE_PAGE_COUNT });
     cursor = page.cursor;
-    for (let index = 0; index < page.keys.length; index += MAX_SCHEDULE_BATCH_SIZE) {
-      const batch = page.keys.slice(index, index + MAX_SCHEDULE_BATCH_SIZE);
-      await Promise.all(batch.map((item) => processStoredSchedule(item.name, env)));
+    const dueKeys = page.keys
+      .map((item) => ({ name: item.name, dueKey: getDueMinuteKeyFromScheduleKey(item.name, LONDON_TIME_ZONE) }))
+      .filter((item) => item.dueKey);
+    for (let index = 0; index < dueKeys.length; index += MAX_SCHEDULE_BATCH_SIZE) {
+      const batch = dueKeys.slice(index, index + MAX_SCHEDULE_BATCH_SIZE);
+      await Promise.all(batch.map((item) => processStoredSchedule(item.name, env, item.dueKey)));
     }
   } while (cursor);
 }
 
-async function processStoredSchedule(key, env) {
+async function processStoredSchedule(key, env, dueKey) {
   const stored = await env.PUSH_SCHEDULES.get(key, "json");
   if (!stored?.subscription || !stored?.schedule) return;
 
-  const dueKey = getDueMinuteKey(stored.schedule, stored.timeZone || LONDON_TIME_ZONE);
   if (!dueKey || stored.lastFiredKey === dueKey) return;
 
   const body = await getScheduleBody(stored.schedule, env);
@@ -166,18 +183,29 @@ async function processStoredSchedule(key, env) {
   }
 }
 
-function getDueMinuteKey(schedule, timeZone) {
+function getDueMinuteKeyFromScheduleKey(key, timeZone) {
+  const parsed = parseScheduleKey(key);
+  if (!parsed) return "";
+  return getDueMinuteKeyForTime(parsed.time, parsed.weekdayMask, timeZone);
+}
+
+function getDueMinuteKeyForTime(time, weekdayMask, timeZone) {
   const now = new Date();
   const parts = getTimeZoneParts(now, timeZone);
-  if (!parts || !isValidTime(schedule.time)) return "";
-  if (!Array.isArray(schedule.weekdays) || !schedule.weekdays.includes(parts.weekday)) return "";
-
+  if (!parts || !isValidTime(time) || !weekdayMask) return "";
   const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
-  const [scheduleHour, scheduleMinute] = schedule.time.split(":").map(Number);
+  const [scheduleHour, scheduleMinute] = time.split(":").map(Number);
   const scheduleMinutes = scheduleHour * 60 + scheduleMinute;
-  if (currentMinutes < scheduleMinutes || currentMinutes > scheduleMinutes + SCHEDULE_CATCHUP_MINUTES) return "";
+  if ((weekdayMask & (1 << parts.weekday)) && currentMinutes >= scheduleMinutes && currentMinutes <= scheduleMinutes + SCHEDULE_CATCHUP_MINUTES) {
+    return `${parts.year}-${parts.month}-${parts.day}T${time}`;
+  }
 
-  return `${parts.year}-${parts.month}-${parts.day}T${schedule.time}`;
+  const previousParts = getTimeZoneParts(new Date(now.getTime() - 24 * 60 * 60_000), timeZone);
+  if (!previousParts || !(weekdayMask & (1 << previousParts.weekday))) return "";
+  const minutesAfterPreviousDaySchedule = currentMinutes + 24 * 60 - scheduleMinutes;
+  if (minutesAfterPreviousDaySchedule < 0 || minutesAfterPreviousDaySchedule > SCHEDULE_CATCHUP_MINUTES) return "";
+
+  return `${previousParts.year}-${previousParts.month}-${previousParts.day}T${time}`;
 }
 
 function getTimeZoneParts(date, timeZone) {
@@ -206,22 +234,13 @@ function getTimeZoneParts(date, timeZone) {
   }
 }
 
-async function validateWriteRequest(request, env, { limit }) {
+function validateWriteRequest(request) {
   if (request.method !== "POST") {
     return json({ error: "Method not allowed." }, 405);
   }
 
   if (!isSameOriginPost(request)) {
     return json({ error: "Server push changes must come from this website." }, 403);
-  }
-
-  if (env.PUSH_SCHEDULES) {
-    const rateKey = `${RATE_LIMIT_PREFIX}${await sha256(getClientAddress(request))}`;
-    const count = Number(await env.PUSH_SCHEDULES.get(rateKey) || "0");
-    if (count >= limit) {
-      return json({ error: "Too many scheduler requests. Please wait a minute and try again." }, 429);
-    }
-    await env.PUSH_SCHEDULES.put(rateKey, String(count + 1), { expirationTtl: 60 });
   }
 
   return null;
@@ -237,28 +256,6 @@ function isSameOriginPost(request) {
   } catch {
     return false;
   }
-}
-
-function getClientAddress(request) {
-  return request.headers.get("CF-Connecting-IP") ||
-    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
-    "unknown";
-}
-
-async function countSchedulesForEndpoint(env, endpointHash) {
-  let cursor;
-  let count = 0;
-  do {
-    const page = await env.PUSH_SCHEDULES.list({
-      prefix: `${SCHEDULE_PREFIX}${endpointHash}:`,
-      cursor,
-      limit: MAX_SCHEDULE_PAGE_COUNT,
-    });
-    count += page.keys.length;
-    cursor = page.cursor;
-    if (count >= MAX_SCHEDULES_PER_SUBSCRIPTION) return count;
-  } while (cursor);
-  return count;
 }
 
 async function getScheduleBody(schedule, env) {
@@ -534,8 +531,66 @@ function normaliseTimeZone(timeZone) {
   }
 }
 
-function getScheduleKey(endpointHash, scheduleId) {
+async function getEndpointMeta(env, endpointHash) {
+  const meta = await env.PUSH_SCHEDULES.get(getEndpointMetaKey(endpointHash), "json");
+  const schedules = meta?.schedules && typeof meta.schedules === "object" ? meta.schedules : {};
+  return {
+    count: Number.isFinite(meta?.count) ? meta.count : Object.keys(schedules).length,
+    schedules,
+    updatedAt: meta?.updatedAt || "",
+  };
+}
+
+async function putEndpointMeta(env, endpointHash, meta) {
+  await env.PUSH_SCHEDULES.put(
+    getEndpointMetaKey(endpointHash),
+    JSON.stringify({
+      count: Object.keys(meta.schedules || {}).length,
+      schedules: meta.schedules || {},
+      updatedAt: meta.updatedAt || new Date().toISOString(),
+    }),
+  );
+}
+
+function getEndpointMetaKey(endpointHash) {
+  return `${ENDPOINT_META_PREFIX}${endpointHash}`;
+}
+
+function getScheduleKey(endpointHash, schedule) {
+  return [
+    SCHEDULE_PREFIX.slice(0, -1),
+    endpointHash,
+    normaliseScheduleId(schedule.id),
+    getScheduleTimeKey(schedule.time),
+    getWeekdayMask(schedule.weekdays),
+  ].join(":");
+}
+
+function getLegacyScheduleKey(endpointHash, scheduleId) {
   return `${SCHEDULE_PREFIX}${endpointHash}:${normaliseScheduleId(scheduleId)}`;
+}
+
+function parseScheduleKey(key) {
+  const parts = String(key || "").split(":");
+  if (parts.length !== 5 || `${parts[0]}:` !== SCHEDULE_PREFIX) return null;
+  const [, endpointHash, scheduleId, timeKey, weekdayMaskText] = parts;
+  if (!endpointHash || !scheduleId || !/^\d{4}$/.test(timeKey)) return null;
+  const weekdayMask = Number.parseInt(weekdayMaskText, 10);
+  if (!Number.isFinite(weekdayMask) || weekdayMask <= 0 || weekdayMask > 127) return null;
+  const time = `${timeKey.slice(0, 2)}:${timeKey.slice(2)}`;
+  if (!isValidTime(time)) return null;
+  return { endpointHash, scheduleId, time, weekdayMask };
+}
+
+function getScheduleTimeKey(time) {
+  return String(time || "").replace(":", "");
+}
+
+function getWeekdayMask(weekdays) {
+  return (Array.isArray(weekdays) ? weekdays : [])
+    .map((day) => Number.parseInt(day, 10))
+    .filter((day) => day >= 0 && day <= 6)
+    .reduce((mask, day) => mask | (1 << day), 0);
 }
 
 function cleanName(value) {
