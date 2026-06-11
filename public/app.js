@@ -1301,6 +1301,8 @@ function renderSelectedTrainStation(station, arrivals, lineId) {
   selectedTrainPanel.append(
     renderCard({
       stop: {
+        id: station.id,
+        naptanId: station.naptanId || station.id,
         commonName: station.name,
         lat: station.lat,
         lon: station.lon,
@@ -1347,6 +1349,8 @@ function renderCard({ stop, arrivals, type, origin = null, boardStation = null, 
   letter.textContent = isTrain ? "Train" : stop.stopLetter || stop.indicator || "Bus";
   if (mapMode === "preview") {
     node.href = `#${mapTargetId}`;
+    node.removeAttribute("target");
+    node.removeAttribute("rel");
     node.dataset.mapMode = "preview";
     node.dataset.mapPointId = mapPointId;
     node.setAttribute("aria-label", `Show route to ${title.textContent} in map preview`);
@@ -1454,11 +1458,19 @@ function handleLiveMapLegendClick(event) {
 }
 
 function handleSelectionCardClick(event, type) {
-  const card = event.target.closest("[data-map-mode='preview'][data-map-point-id]");
+  const card = event.target.closest(".stop-card");
   const location = type === "bus" ? state.selectedBusLocation : state.selectedTrainLocation;
   if (!card || !location) return;
+  const fallbackPointId =
+    type === "bus" && state.selectedStop
+      ? getLiveMapPointId(state.selectedStop, "bus")
+      : type === "train" && state.selectedTrainStation
+        ? getLiveMapPointId(state.selectedTrainStation, "train")
+        : "";
+  const pointId = card.dataset.mapPointId || fallbackPointId;
+  if (!pointId) return;
   event.preventDefault();
-  selectSelectionMapPoint(type, card.dataset.mapPointId);
+  selectSelectionMapPoint(type, pointId);
 }
 
 function handleSelectionMapLegendClick(event, type) {
