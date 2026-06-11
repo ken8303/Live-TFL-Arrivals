@@ -208,6 +208,21 @@
           </label>
         </section>
 
+        <section class="map-preview" id="busMapPreview" aria-label="Bus stop map preview">
+          <div class="section-heading">
+            <h2>Map Preview</h2>
+            <p id="busMapPreviewText">Search a location to preview nearby bus stops</p>
+          </div>
+          <iframe
+            class="mini-map"
+            id="busMapFrame"
+            title="Nearby bus stops map"
+            loading="lazy"
+            referrerpolicy="no-referrer-when-downgrade"
+          ></iframe>
+          <div class="map-legend" id="busMapLegend"></div>
+        </section>
+
         <section class="result-section" aria-label="Selected bus stop arrivals">
           <div class="section-heading">
             <div>
@@ -265,6 +280,21 @@
           </label>
         </section>
 
+        <section class="map-preview" id="trainMapPreview" aria-label="Train station map preview">
+          <div class="section-heading">
+            <h2>Map Preview</h2>
+            <p id="trainMapPreviewText">Search a location to preview nearby train stations</p>
+          </div>
+          <iframe
+            class="mini-map"
+            id="trainMapFrame"
+            title="Nearby train stations map"
+            loading="lazy"
+            referrerpolicy="no-referrer-when-downgrade"
+          ></iframe>
+          <div class="map-legend" id="trainMapLegend"></div>
+        </section>
+
         <section class="result-section" aria-label="Selected train station arrivals">
           <div class="section-heading">
             <div>
@@ -317,7 +347,7 @@
               <div class="scheduler-form">
                 <label>
                   Time
-                  <input id="schedulerTimeInput" type="time" value="08:00" />
+                  <input id="schedulerTimeInput" type="time" value="08:00" step="300" />
                 </label>
                 <fieldset class="weekday-fieldset">
                   <legend>Weekdays</legend>

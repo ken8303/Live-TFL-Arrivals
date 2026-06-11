@@ -510,7 +510,7 @@ function normaliseSameOriginPath(value) {
 function isValidTime(value) {
   if (!/^\d{2}:\d{2}$/.test(String(value))) return false;
   const [hours, minutes] = String(value).split(":").map(Number);
-  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 && minutes % 5 === 0;
 }
 
 function isAllowedPushHost(hostname) {

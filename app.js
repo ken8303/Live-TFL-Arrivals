@@ -122,6 +122,8 @@ const state = {
   pendingReload: false,
   selectedAreaStops: [],
   selectedBusLocation: null,
+  busMapPoints: [],
+  selectedBusPointId: null,
   selectedStop: null,
   selectedStopArrivals: [],
   selectedBusRoute: "",
@@ -129,6 +131,8 @@ const state = {
   selectedSearchQuery: null,
   availableTrainStations: [...TRAIN_STATIONS],
   selectedTrainLocation: null,
+  trainMapPoints: [],
+  selectedTrainPointId: null,
   selectedTrainStation: null,
   selectedTrainLine: null,
   selectedTrainArrivals: [],
@@ -190,6 +194,10 @@ const selectedStopSelect = document.querySelector("#selectedStopSelect");
 const busLocateButton = document.querySelector("#busLocateButton");
 const busLocationForm = document.querySelector("#busLocationForm");
 const busLocationInput = document.querySelector("#busLocationInput");
+const busMapPreview = document.querySelector("#busMapPreview");
+const busMapFrame = document.querySelector("#busMapFrame");
+const busMapLegend = document.querySelector("#busMapLegend");
+const busMapPreviewText = document.querySelector("#busMapPreviewText");
 const busRouteSelect = document.querySelector("#busRouteSelect");
 const busDestinationSelect = document.querySelector("#busDestinationSelect");
 const busDelaySelect = document.querySelector("#busDelaySelect");
@@ -198,6 +206,10 @@ const busScheduleButton = document.querySelector("#busScheduleButton");
 const trainLocateButton = document.querySelector("#trainLocateButton");
 const trainLocationForm = document.querySelector("#trainLocationForm");
 const trainLocationInput = document.querySelector("#trainLocationInput");
+const trainMapPreview = document.querySelector("#trainMapPreview");
+const trainMapFrame = document.querySelector("#trainMapFrame");
+const trainMapLegend = document.querySelector("#trainMapLegend");
+const trainMapPreviewText = document.querySelector("#trainMapPreviewText");
 const trainStationSelect = document.querySelector("#trainStationSelect");
 const trainLineSelect = document.querySelector("#trainLineSelect");
 const trainDestinationSelect = document.querySelector("#trainDestinationSelect");
@@ -247,6 +259,8 @@ trainRefreshSelect.addEventListener("change", handleRefreshToggle);
 stopGrid.addEventListener("click", handleLiveCardClick);
 stationGrid.addEventListener("click", handleLiveCardClick);
 liveMapLegend.addEventListener("click", handleLiveMapLegendClick);
+busMapLegend.addEventListener("click", (event) => handleSelectionMapLegendClick(event, "bus"));
+trainMapLegend.addEventListener("click", (event) => handleSelectionMapLegendClick(event, "train"));
 liveNavButton.addEventListener("click", () => showPage("live"));
 selectNavButton.addEventListener("click", () => showPage("select"));
 selectTrainNavButton.addEventListener("click", () => showPage("train"));
@@ -262,6 +276,7 @@ selectedStopSelect.addEventListener("change", () => {
   if (stop) {
     state.selectedBusRoute = "";
     state.selectedBusDestination = "";
+    selectSelectionMapPoint("bus", getLiveMapPointId(stop, "bus"), { scroll: false });
     loadSelectedStopArrivals(stop);
   }
 });
@@ -276,13 +291,20 @@ busDestinationSelect.addEventListener("change", () => {
   renderSelectedStopWithFilters();
 });
 busScheduleButton.addEventListener("click", () => openSchedulerFromSelection("bus"));
+selectedStopPanel.addEventListener("click", (event) => handleSelectionCardClick(event, "bus"));
 trainLocateButton.addEventListener("click", () => locateForSelection("train"));
 trainLocationForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const query = trainLocationInput.value.trim();
   if (query) searchSelectionLocation("train", query);
 });
-trainStationSelect.addEventListener("change", () => loadSelectedTrainStation());
+trainStationSelect.addEventListener("change", () => {
+  const station = getSelectedTrainStation();
+  if (station) {
+    selectSelectionMapPoint("train", getLiveMapPointId(station, "train"), { scroll: false });
+  }
+  loadSelectedTrainStation();
+});
 trainLineSelect.addEventListener("change", () => {
   const station = getSelectedTrainStation();
   if (station && trainLineSelect.value) {
@@ -295,10 +317,15 @@ trainDestinationSelect.addEventListener("change", () => {
   renderSelectedTrainWithFilters();
 });
 trainScheduleButton.addEventListener("click", () => openSchedulerFromSelection("train"));
+selectedTrainPanel.addEventListener("click", (event) => handleSelectionCardClick(event, "train"));
 enableNotificationsButton.addEventListener("click", requestNotificationPermission);
 testNotificationButton.addEventListener("click", sendTestNotification);
 saveScheduleButton.addEventListener("click", saveCurrentSchedule);
 weekdayGrid.addEventListener("change", renderSchedulerPreview);
+schedulerTimeInput.addEventListener("change", () => {
+  schedulerTimeInput.value = normaliseScheduleTimeStep(schedulerTimeInput.value || "08:00");
+  renderSchedulerPreview();
+});
 savedSchedulesList.addEventListener("click", handleSavedSchedulesClick);
 populateTrainStations();
 populateDelaySelects();
@@ -495,6 +522,9 @@ async function loadNearbyBusStopsForSelection(location, preferredStopId = state.
   state.selectedBusDestination = "";
   state.selectedSearchQuery = location.label || "";
   state.selectedAreaStops = [];
+  state.busMapPoints = [];
+  state.selectedBusPointId = null;
+  updateSelectionMap("bus", location);
   selectedStopSelect.disabled = true;
   selectedStopSelect.innerHTML = `<option>Loading bus stops...</option>`;
   resetBusFilterSelects("Choose a bus stop first", "Choose a route first");
@@ -508,6 +538,7 @@ async function loadNearbyBusStopsForSelection(location, preferredStopId = state.
   try {
     const stops = await findNearbyBusStopsWithin1km(location);
     state.selectedAreaStops = stops;
+    updateSelectionMap("bus", location, buildSelectionMapPoints(stops, "bus"));
 
     if (!stops.length) {
       selectedStopSelect.innerHTML = `<option>No bus stops found</option>`;
@@ -555,6 +586,9 @@ async function loadNearbyTrainStationsForSelection(location, preferredStationId 
   state.selectedTrainLine = null;
   state.selectedTrainArrivals = [];
   state.selectedTrainDestination = "";
+  state.trainMapPoints = [];
+  state.selectedTrainPointId = null;
+  updateSelectionMap("train", location);
   trainStationSelect.disabled = true;
   trainStationSelect.innerHTML = `<option>Loading train stations...</option>`;
   trainLineSelect.disabled = true;
@@ -572,6 +606,7 @@ async function loadNearbyTrainStationsForSelection(location, preferredStationId 
   try {
     const stations = await findNearbyTrainStationsWithin1km(location);
     state.availableTrainStations = stations;
+    updateSelectionMap("train", location, buildSelectionMapPoints(stations, "train"));
     populateTrainStations();
     if (!stations.length) {
       selectedTrainPanel.innerHTML = `<div class="empty-state">No train stations were found within 1 km of this location.</div>`;
@@ -612,6 +647,8 @@ async function loadSelectedStopArrivals(stop, preferredRoute = state.selectedBus
 
   state.loading = true;
   state.selectedStop = stop;
+  state.selectedBusPointId = getLiveMapPointId(stop, "bus");
+  updateSelectionMap("bus", state.selectedBusLocation, state.busMapPoints);
   state.selectedStopArrivals = [];
   state.selectedBusRoute = preferredRoute || "";
   state.selectedBusDestination = preferredDestination || "";
@@ -653,6 +690,8 @@ async function loadSelectedTrainStation(preferredLine = state.savedTrainLine) {
 
   state.loading = true;
   state.selectedTrainStation = station;
+  state.selectedTrainPointId = getLiveMapPointId(station, "train");
+  updateSelectionMap("train", state.selectedTrainLocation, state.trainMapPoints);
   state.selectedTrainLine = null;
   state.selectedTrainArrivals = [];
   state.selectedTrainDestination = "";
@@ -1245,7 +1284,16 @@ function renderStations(stationsWithDepartures) {
 
 function renderSelectedStop(stop, arrivals) {
   selectedStopPanel.innerHTML = "";
-  selectedStopPanel.append(renderCard({ stop, arrivals, type: "bus" }));
+  selectedStopPanel.append(
+    renderCard({
+      stop,
+      arrivals,
+      type: "bus",
+      origin: state.selectedBusLocation,
+      mapMode: "preview",
+      mapTargetId: "busMapPreview",
+    }),
+  );
 }
 
 function renderSelectedTrainStation(station, arrivals, lineId) {
@@ -1260,7 +1308,10 @@ function renderSelectedTrainStation(station, arrivals, lineId) {
       },
       arrivals,
       type: "train",
+      origin: state.selectedTrainLocation,
       boardStation: station,
+      mapMode: "preview",
+      mapTargetId: "trainMapPreview",
     }),
   );
 }
@@ -1281,7 +1332,7 @@ function renderLineStatus(lineStatus, lineId) {
   `;
 }
 
-function renderCard({ stop, arrivals, type, origin = null, boardStation = null, mapMode = "external" }) {
+function renderCard({ stop, arrivals, type, origin = null, boardStation = null, mapMode = "external", mapTargetId = "liveMapPreview" }) {
   const node = stopTemplate.content.firstElementChild.cloneNode(true);
   const title = node.querySelector("h2");
   const meta = node.querySelector(".stop-meta");
@@ -1295,7 +1346,7 @@ function renderCard({ stop, arrivals, type, origin = null, boardStation = null, 
   meta.textContent = isTrain ? `${getTravelMeta(stop, origin)}${getLineSummary(stop)}` : `${getTravelMeta(stop, origin)}${getTowards(stop)}`;
   letter.textContent = isTrain ? "Train" : stop.stopLetter || stop.indicator || "Bus";
   if (mapMode === "preview") {
-    node.href = "#liveMapPreview";
+    node.href = `#${mapTargetId}`;
     node.dataset.mapMode = "preview";
     node.dataset.mapPointId = mapPointId;
     node.setAttribute("aria-label", `Show route to ${title.textContent} in map preview`);
@@ -1402,10 +1453,41 @@ function handleLiveMapLegendClick(event) {
   selectLiveMapPoint(button.dataset.mapPointId);
 }
 
+function handleSelectionCardClick(event, type) {
+  const card = event.target.closest("[data-map-mode='preview'][data-map-point-id]");
+  const location = type === "bus" ? state.selectedBusLocation : state.selectedTrainLocation;
+  if (!card || !location) return;
+  event.preventDefault();
+  selectSelectionMapPoint(type, card.dataset.mapPointId);
+}
+
+function handleSelectionMapLegendClick(event, type) {
+  const button = event.target.closest("[data-map-point-id]");
+  const location = type === "bus" ? state.selectedBusLocation : state.selectedTrainLocation;
+  if (!button || !location) return;
+  event.preventDefault();
+  selectSelectionMapPoint(type, button.dataset.mapPointId);
+}
+
 function selectLiveMapPoint(pointId) {
   state.selectedLivePointId = pointId === "__overview__" ? null : pointId;
   updateLiveMap(state.lastLocation, state.liveMapPoints);
   liveMapPreview.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function selectSelectionMapPoint(type, pointId, options = {}) {
+  const location = type === "bus" ? state.selectedBusLocation : state.selectedTrainLocation;
+  const points = type === "bus" ? state.busMapPoints : state.trainMapPoints;
+  if (!location) return;
+  if (type === "bus") {
+    state.selectedBusPointId = pointId === "__overview__" ? null : pointId;
+  } else {
+    state.selectedTrainPointId = pointId === "__overview__" ? null : pointId;
+  }
+  updateSelectionMap(type, location, points);
+  if (options.scroll !== false) {
+    (type === "bus" ? busMapPreview : trainMapPreview).scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 function showPage(page, options = {}) {
@@ -1973,6 +2055,59 @@ function updateLiveMap(location, points = []) {
   renderLiveMap(location, points, selectedPoint);
 }
 
+function updateSelectionMap(type, location, points = []) {
+  const elements = getSelectionMapElements(type);
+  const lat = Number(location?.lat);
+  const lon = Number(location?.lon);
+  const fallbackText = type === "bus" ? "Search a location to preview nearby bus stops" : "Search a location to preview nearby train stations";
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    elements.frame.removeAttribute("src");
+    elements.legend.innerHTML = "";
+    elements.text.textContent = fallbackText;
+    if (type === "bus") {
+      state.busMapPoints = [];
+      state.selectedBusPointId = null;
+    } else {
+      state.trainMapPoints = [];
+      state.selectedTrainPointId = null;
+    }
+    return;
+  }
+
+  if (type === "bus") {
+    state.busMapPoints = points;
+    if (state.selectedBusPointId && !points.some((point) => point.id === state.selectedBusPointId)) {
+      state.selectedBusPointId = null;
+    }
+  } else {
+    state.trainMapPoints = points;
+    if (state.selectedTrainPointId && !points.some((point) => point.id === state.selectedTrainPointId)) {
+      state.selectedTrainPointId = null;
+    }
+  }
+
+  const selectedPointId = type === "bus" ? state.selectedBusPointId : state.selectedTrainPointId;
+  const selectedPoint = points.find((point) => point.id === selectedPointId) || null;
+  const label = type === "bus" ? "bus stops" : "train stations";
+  elements.text.textContent =
+    selectedPoint
+      ? `Showing route from ${location.label || "your search"} to ${selectedPoint.label}`
+      : points.length > 0
+      ? `Showing ${points.length} ${label} around ${location.label || "this area"}`
+      : location.label
+        ? `Centered on ${location.label}`
+        : "Current search area";
+  elements.frame.src = buildGoogleMapEmbedUrl(location, selectedPoint ? [selectedPoint] : points);
+  renderMapLegendInto(elements.legend, location, points, selectedPoint);
+}
+
+function getSelectionMapElements(type) {
+  return type === "bus"
+    ? { frame: busMapFrame, legend: busMapLegend, text: busMapPreviewText }
+    : { frame: trainMapFrame, legend: trainMapLegend, text: trainMapPreviewText };
+}
+
 function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) {
   const points = [];
   if (options.showBus) {
@@ -2012,12 +2147,34 @@ function buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options) 
   return points;
 }
 
+function buildSelectionMapPoints(items, type) {
+  return items
+    .map((item) => {
+      const lat = Number(item?.lat);
+      const lon = Number(item?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return {
+        id: getLiveMapPointId(item, type),
+        type,
+        lat,
+        lon,
+        label: cleanStationName(item.commonName || item.name || (type === "bus" ? "Bus stop" : "Train station")),
+        href: getMapUrl(item),
+      };
+    })
+    .filter(Boolean);
+}
+
 function renderLiveMap(location, points, selectedPoint = null) {
   liveMapFrame.src = buildGoogleMapEmbedUrl(location, selectedPoint ? [selectedPoint] : points);
   renderMapLegend(location, points, selectedPoint);
 }
 
 function renderMapLegend(location, points, selectedPoint = null) {
+  renderMapLegendInto(liveMapLegend, location, points, selectedPoint);
+}
+
+function renderMapLegendInto(legend, location, points, selectedPoint = null) {
   const legendItems = [
     {
       id: "__overview__",
@@ -2027,7 +2184,7 @@ function renderMapLegend(location, points, selectedPoint = null) {
     ...points,
   ];
 
-  liveMapLegend.innerHTML = legendItems
+  legend.innerHTML = legendItems
     .map(
       (item) => `
         <button
@@ -2144,7 +2301,7 @@ function buildScheduleDraft(type) {
 
 function syncSchedulerFormFromDraft() {
   const draft = state.schedulerDraft;
-  schedulerTimeInput.value = draft?.time || "08:00";
+  schedulerTimeInput.value = normaliseScheduleTimeStep(draft?.time || "08:00");
   const selectedDays = new Set(draft?.weekdays || [1, 2, 3, 4, 5]);
   weekdayGrid.querySelectorAll('input[type="checkbox"]').forEach((input) => {
     input.checked = selectedDays.has(Number.parseInt(input.value, 10));
@@ -2219,7 +2376,8 @@ async function saveCurrentSchedule() {
     return;
   }
 
-  const time = schedulerTimeInput.value || "08:00";
+  const time = normaliseScheduleTimeStep(schedulerTimeInput.value || "08:00");
+  schedulerTimeInput.value = time;
   const schedule = {
     ...state.schedulerDraft,
     id: state.schedulerDraft.id || createScheduleId(),
@@ -2312,7 +2470,7 @@ function renderSchedulerPreview() {
 
   const previewSchedule = {
     ...draft,
-    time: schedulerTimeInput.value || draft.time || "08:00",
+    time: normaliseScheduleTimeStep(schedulerTimeInput.value || draft.time || "08:00"),
     weekdays: getSelectedWeekdaysFromForm(),
   };
 
@@ -2326,7 +2484,7 @@ function renderSchedulerPreview() {
 }
 
 function getNextScheduleTimes(schedule, count, fromDate = new Date()) {
-  const [hourText, minuteText] = (schedule.time || "08:00").split(":");
+  const [hourText, minuteText] = normaliseScheduleTimeStep(schedule.time || "08:00").split(":");
   const hour = Number.parseInt(hourText, 10);
   const minute = Number.parseInt(minuteText, 10);
   const weekdays = new Set(schedule.weekdays || []);
@@ -2630,7 +2788,7 @@ async function runDueSchedules() {
 }
 
 function getPreviousScheduleTime(schedule, fromDate = new Date()) {
-  const [hourText, minuteText] = (schedule.time || "08:00").split(":");
+  const [hourText, minuteText] = normaliseScheduleTimeStep(schedule.time || "08:00").split(":");
   const hour = Number.parseInt(hourText, 10);
   const minute = Number.parseInt(minuteText, 10);
   const weekdays = new Set(schedule.weekdays || []);
@@ -2646,6 +2804,15 @@ function getPreviousScheduleTime(schedule, fromDate = new Date()) {
   }
 
   return null;
+}
+
+function normaliseScheduleTimeStep(value) {
+  const [hourText, minuteText] = String(value || "08:00").split(":");
+  const hour = Number.parseInt(hourText, 10);
+  const minute = Number.parseInt(minuteText, 10);
+  if (!Number.isFinite(hour) || hour < 0 || hour > 23 || !Number.isFinite(minute)) return "08:00";
+  const roundedMinute = Math.min(55, Math.max(0, Math.round(minute / 5) * 5));
+  return `${String(hour).padStart(2, "0")}:${String(roundedMinute).padStart(2, "0")}`;
 }
 
 async function sendScheduleNotification(schedule) {
