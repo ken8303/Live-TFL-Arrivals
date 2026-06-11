@@ -1,4 +1,8 @@
 const READING_API_BASE = "https://reading-opendata.r2p.com/api/v1";
+const ALLOWED_QUERY_PARAMS = {
+  "/siri-sm": new Set(["location"]),
+  "/lines": new Set(),
+};
 
 export function buildReadingApiUrl(path, env, requestUrl) {
   if (!env.READING_OPEN_DATA_API_TOKEN) {
@@ -10,9 +14,10 @@ export function buildReadingApiUrl(path, env, requestUrl) {
 
   if (requestUrl) {
     const source = new URL(requestUrl);
+    const allowedParams = ALLOWED_QUERY_PARAMS[path] || new Set();
     source.searchParams.forEach((value, key) => {
-      if (key === "api_token") return;
-      url.searchParams.set(key, value);
+      if (!allowedParams.has(key)) return;
+      url.searchParams.set(key, value.slice(0, 120));
     });
   }
 
