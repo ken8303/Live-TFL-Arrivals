@@ -12,7 +12,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-06-11-nationalrail-stations";
+const APP_VERSION = "2026-06-17-reading-elizabeth-crs";
 
 export default {
   async fetch(request, env) {

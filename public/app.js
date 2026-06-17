@@ -1803,6 +1803,7 @@ function normalizeNearbyTrainStations(stops) {
       naptanId: stationId,
       name: cleanStationName(stop.commonName || stop.name || "Unnamed station"),
       commonName: cleanStationName(stop.commonName || stop.name || "Unnamed station"),
+      crs: stop.crs || existing?.crs || getKnownNationalRailCrs(stop, stationId),
       lat: Number.isFinite(stop.lat) ? stop.lat : existing?.lat ?? null,
       lon: Number.isFinite(stop.lon) ? stop.lon : existing?.lon ?? null,
       lines: (stop.lines || []).filter((line) => STATION_MODES.has(line.id)),
@@ -1817,6 +1818,7 @@ function normalizeNearbyTrainStations(stops) {
       stationsById.set(stationId, {
         ...existing,
         ...normalized,
+        crs: normalized.crs || existing.crs || "",
         lines: normalized.lines.length ? normalized.lines : existing.lines || [],
       });
     } else if (!existing.lines?.length && normalized.lines.length) {
@@ -1860,6 +1862,17 @@ function getExactNationalRailFallbackStation(query) {
   const normalisedQuery = String(query || "").replace(/\s+/g, " ").toLowerCase().replace(/\bstation\b/g, "").trim();
   if (!normalisedQuery) return null;
   return NATIONAL_RAIL_FALLBACK_STATIONS.find((station) => station.crs.toLowerCase() === normalisedQuery || station.name.toLowerCase() === normalisedQuery) || null;
+}
+
+function getKnownNationalRailCrs(stop, stationId = "") {
+  const stationName = cleanStationName(stop?.commonName || stop?.name || "");
+  const normalisedName = stationName.toLowerCase();
+  const id = String(stationId || stop?.id || stop?.naptanId || "");
+  const knownById = {
+    "910GRDNGSTN": "RDG",
+  };
+  if (knownById[id]) return knownById[id];
+  return NATIONAL_RAIL_FALLBACK_STATIONS.find((station) => station.name.toLowerCase() === normalisedName)?.crs || "";
 }
 
 function findNearbyNationalRailFallbackStations(location, radius) {
