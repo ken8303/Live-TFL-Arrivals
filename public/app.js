@@ -1877,11 +1877,15 @@ function getKnownNationalRailCrs(stop, stationId = "") {
   const stationName = cleanStationName(stop?.commonName || stop?.name || "");
   const normalisedName = stationName.toLowerCase();
   const id = String(stationId || stop?.id || stop?.naptanId || "");
-  const knownById = {
-    "910GRDNGSTN": "RDG",
-  };
+  const knownById = getKnownNationalRailIdMap();
   if (knownById[id]) return knownById[id];
   return NATIONAL_RAIL_FALLBACK_STATIONS.find((station) => station.name.toLowerCase() === normalisedName)?.crs || "";
+}
+
+function getKnownNationalRailIdMap() {
+  return {
+    "910GRDNGSTN": "RDG",
+  };
 }
 
 function findNearbyNationalRailFallbackStations(location, radius) {
@@ -1903,24 +1907,68 @@ function mergeNearbyTrainStations(tflStops, nationalRailStations) {
 function mergeTrainStationOptions(...stationGroups) {
   const byKey = new Map();
   stationGroups.flat().forEach((station) => {
-    const key = station.crs ? `crs:${station.crs}` : `id:${station.id}`;
+    const crs = station.crs || getKnownNationalRailCrs(station);
+    const key = crs ? `crs:${crs}` : `id:${station.id}`;
+    const normalisedStation = { ...station, crs };
     const existing = byKey.get(key);
-    if (!existing || (station.distance ?? Number.MAX_VALUE) < (existing.distance ?? Number.MAX_VALUE)) {
-      byKey.set(key, station);
+    if (!existing) {
+      byKey.set(key, normalisedStation);
+      return;
     }
+    byKey.set(key, mergeTrainStationOption(existing, normalisedStation));
   });
   return [...byKey.values()];
+}
+
+function mergeTrainStationOption(existing, station) {
+  const closer = (station.distance ?? Number.MAX_VALUE) < (existing.distance ?? Number.MAX_VALUE) ? station : existing;
+  const other = closer === station ? existing : station;
+  const lines = mergeTrainLines(existing.lines || [], station.lines || []);
+  return {
+    ...other,
+    ...closer,
+    crs: existing.crs || station.crs || "",
+    lines,
+    provider: closer.provider,
+  };
+}
+
+function mergeTrainLines(...lineGroups) {
+  const byId = new Map();
+  lineGroups.flat().forEach((line) => {
+    if (line?.id && !byId.has(line.id)) {
+      byId.set(line.id, line);
+    }
+  });
+  return [...byId.values()];
 }
 
 function matchesPreferredTrainStation(station, preferredStationId) {
   if (!station || !preferredStationId) return false;
   if (station.id === preferredStationId || station.naptanId === preferredStationId) return true;
-  const preferredCrs = String(preferredStationId).startsWith("NR:") ? String(preferredStationId).slice(3) : "";
-  return Boolean(preferredCrs && station.crs === preferredCrs);
+  const preferredCrs = getPreferredNationalRailCrs(preferredStationId);
+  if (!preferredCrs) return false;
+  if (station.crs === preferredCrs || getKnownNationalRailCrs(station) === preferredCrs) return true;
+  const knownStation = getKnownNationalRailFallbackStationByCrs(preferredCrs);
+  const stationName = cleanStationName(station.commonName || station.name || "").toLowerCase();
+  if (knownStation && stationName === knownStation.name.toLowerCase()) return true;
+  const knownTflIds = Object.entries(getKnownNationalRailIdMap())
+    .filter(([, crs]) => crs === preferredCrs)
+    .map(([id]) => id);
+  return knownTflIds.includes(String(station.id || station.naptanId || ""));
+}
+
+function getPreferredNationalRailCrs(preferredStationId) {
+  const value = String(preferredStationId || "");
+  return value.startsWith("NR:") ? value.slice(3).toUpperCase() : "";
+}
+
+function getKnownNationalRailFallbackStationByCrs(crs) {
+  return NATIONAL_RAIL_FALLBACK_STATIONS.find((station) => station.crs === crs) || null;
 }
 
 function isNationalRailOnlyStation(station) {
-  return station?.provider === "national-rail" || (station?.crs && String(station.id || "").startsWith("NR:"));
+  return station?.provider === "national-rail" && String(station.id || "").startsWith("NR:");
 }
 
 function formatStopOption(stop) {
