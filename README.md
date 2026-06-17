@@ -61,7 +61,18 @@ For live arrivals, add:
 ```text
 NATIONAL_RAIL_DARWIN_TOKEN
 READING_OPEN_DATA_API_TOKEN
+TFL_APP_KEY
 ```
+
+`TFL_APP_KEY` is used only by the Worker through `/api/tfl/...`, so the browser never sees your TfL API key. If your TfL account also gives an app id, add it as `TFL_APP_ID`.
+
+With Wrangler, add the TfL key as a secret:
+
+```sh
+npx wrangler secret put TFL_APP_KEY
+```
+
+Do not put the TfL key in `app.js`, `index.html`, `wrangler.jsonc`, or `.env` committed to GitHub.
 
 This must be the OpenLDBWS / Darwin live departure board token, usually shaped like:
 

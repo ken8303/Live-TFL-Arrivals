@@ -1,4 +1,4 @@
-const API_BASE = "https://api.tfl.gov.uk";
+const API_BASE = `${window.location.origin}/api/tfl`;
 const DEFAULT_LIVE_BUS_STOPS = 3;
 const DEFAULT_LIVE_TRAIN_STATIONS = 3;
 const MAX_LIVE_DISPLAY_COUNT = 5;

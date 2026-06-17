@@ -4,6 +4,7 @@ import { onRequestGet as getBusStopsCatalog } from "./functions/api/catalog/bus-
 import { onRequestGet as getTrainStationsCatalog } from "./functions/api/catalog/train-stations.js";
 import { onRequestGet as getReadingBusPredictions } from "./functions/api/reading-buses/predictions.js";
 import { onRequestGet as getReadingBusLines } from "./functions/api/reading-buses/lines.js";
+import { onRequestGet as getTflApi } from "./functions/api/tfl.js";
 import {
   deletePushSchedule,
   getPushPublicKey,
@@ -12,7 +13,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-06-17-reading-elizabeth-crs";
+const APP_VERSION = "2026-06-17-tfl-secret-proxy";
 
 export default {
   async fetch(request, env) {
@@ -20,6 +21,10 @@ export default {
 
     if (url.pathname === "/api/national-rail/arrivals") {
       return withVersionHeader(await getNationalRailArrivals({ request, env }));
+    }
+
+    if (url.pathname === "/api/tfl" || url.pathname.startsWith("/api/tfl/")) {
+      return withVersionHeader(await getTflApi({ request, env }));
     }
 
     if (url.pathname === "/api/national-rail/config") {

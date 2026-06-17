@@ -7,7 +7,9 @@ const PORT = Number(process.env.PORT) || 8000;
 const HOST = process.env.HOST || "127.0.0.1";
 const DARWIN_ENDPOINT = "https://lite.realtime.nationalrail.co.uk/OpenLDBWS/ldb11.asmx";
 const DARWIN_DEPARTURE_SOAP_ACTION = "http://thalesgroup.com/RTTI/2015-05-14/ldb/GetDepBoardWithDetails";
+const TFL_API_BASE = "https://api.tfl.gov.uk";
 const LONDON_TIME_ZONE = "Europe/London";
+const TFL_ALLOWED_QUERY_PARAMS = new Set(["lat", "lon", "stopTypes", "modes", "radius", "page", "lineIds", "direction"]);
 const PUBLIC_FILES = new Set([
   "/",
   "/index.html",
@@ -61,6 +63,11 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === "/api/tfl" || url.pathname.startsWith("/api/tfl/")) {
+      await handleTflProxy(url, response);
+      return;
+    }
+
     if (url.pathname === "/api/catalog/bus-stops") {
       const { getCachedBusStops } = await getCatalogApi();
       sendJson(response, 200, await getCachedBusStops(process.env));
@@ -83,6 +90,47 @@ const server = http.createServer(async (request, response) => {
 server.listen(PORT, HOST, () => {
   console.log(`Live arrivals server running at http://${HOST}:${PORT}/`);
 });
+
+async function handleTflProxy(url, response) {
+  const upstreamUrl = buildTflProxyUrl(url);
+  const upstreamResponse = await fetch(upstreamUrl, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  response.writeHead(upstreamResponse.status, {
+    "Content-Type": upstreamResponse.headers.get("content-type") || "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(await upstreamResponse.text());
+}
+
+function buildTflProxyUrl(url) {
+  const path = url.pathname.slice("/api/tfl".length) || "/";
+  if (!isAllowedTflPath(path)) {
+    throw new Error("TfL endpoint is not allowed by this app.");
+  }
+
+  const upstreamUrl = new URL(`${TFL_API_BASE}${path}`);
+  url.searchParams.forEach((value, key) => {
+    if (!TFL_ALLOWED_QUERY_PARAMS.has(key)) return;
+    upstreamUrl.searchParams.set(key, value.slice(0, 300));
+  });
+  if (process.env.TFL_APP_KEY) upstreamUrl.searchParams.set("app_key", process.env.TFL_APP_KEY);
+  if (process.env.TFL_APP_ID) upstreamUrl.searchParams.set("app_id", process.env.TFL_APP_ID);
+  return upstreamUrl;
+}
+
+function isAllowedTflPath(pathname) {
+  return [
+    /^\/StopPoint$/,
+    /^\/StopPoint\/Mode\/[a-z0-9,-]+$/i,
+    /^\/StopPoint\/Search\/[^/]+$/i,
+    /^\/StopPoint\/[^/]+\/Arrivals$/i,
+    /^\/Place\/Search\/[^/]+$/i,
+    /^\/Line\/[^/]+\/Status$/i,
+  ].some((pattern) => pattern.test(pathname));
+}
 
 function loadEnv() {
   const envPath = path.join(ROOT, ".env");
