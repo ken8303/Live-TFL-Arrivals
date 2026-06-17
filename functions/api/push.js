@@ -283,12 +283,13 @@ async function getBusLines(schedule, env) {
 }
 
 async function getTrainLines(schedule, env) {
-  const arrivals = schedule.lineId === "national-rail" && schedule.crs
-    ? await getNationalRailScheduleArrivals(schedule.crs, env)
+  const usesDepartureBoard = shouldUseNationalRailDeparturesForLine(schedule);
+  const arrivals = usesDepartureBoard
+    ? await getNationalRailScheduleArrivals(schedule.crs, env, schedule.lineId === "elizabeth" ? "elizabeth-line" : "")
     : await getTflArrivals(schedule.stationId, "train", env);
 
   return arrivals
-    .filter((arrival) => schedule.lineId === "national-rail" || arrival.lineId === schedule.lineId || arrival.modeName === schedule.lineId)
+    .filter((arrival) => usesDepartureBoard || arrival.lineId === schedule.lineId || arrival.modeName === schedule.lineId)
     .filter((arrival) => !schedule.destination || cleanName(arrival.destinationName) === schedule.destination)
     .sort((a, b) => a.timeToStation - b.timeToStation)
     .slice(0, MAX_PUSH_LINES)
@@ -303,12 +304,21 @@ async function getReadingBusArrivals(location, env) {
   return data.arrivals || [];
 }
 
-async function getNationalRailScheduleArrivals(crs, env) {
-  const request = new Request(`https://worker.local/api/national-rail/arrivals?crs=${encodeURIComponent(crs || "")}&rows=10`);
+async function getNationalRailScheduleArrivals(crs, env, operator = "") {
+  const params = new URLSearchParams({
+    crs: crs || "",
+    rows: "10",
+  });
+  if (operator) params.set("operator", operator);
+  const request = new Request(`https://worker.local/api/national-rail/arrivals?${params.toString()}`);
   const response = await getNationalRailArrivals({ request, env });
   const data = await response.json();
   if (!response.ok) throw new Error(data.help || data.error || "National Rail times could not be loaded.");
   return data.arrivals || [];
+}
+
+function shouldUseNationalRailDeparturesForLine(schedule) {
+  return Boolean(schedule.crs) && (schedule.lineId === "national-rail" || schedule.lineId === "elizabeth");
 }
 
 async function getTflArrivals(stopId, type, env) {

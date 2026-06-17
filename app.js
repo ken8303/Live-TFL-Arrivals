@@ -754,7 +754,11 @@ async function loadSelectedTrainLine(station, lineId, preferredDestination = sta
   resetTrainDestinationSelect("Loading destinations...");
   selectedTrainTitle.textContent = station.name;
   selectedTrainSubtitle.textContent =
-    lineId === "national-rail" && station.crs ? `Next ${NATIONAL_RAIL_RESULTS} departures` : `Next ${SELECTED_TRAIN_ARRIVALS} arrivals`;
+    lineId === "national-rail" && station.crs
+      ? `Next ${NATIONAL_RAIL_RESULTS} departures`
+      : shouldUseNationalRailDeparturesForLine(station, lineId)
+        ? `Next ${SELECTED_TRAIN_ARRIVALS} departures`
+        : `Next ${SELECTED_TRAIN_ARRIVALS} arrivals`;
   lineStatusPanel.innerHTML = `<div class="line-status loading">Loading line status...</div>`;
   selectedTrainPanel.innerHTML = "";
   renderSkeletons(selectedTrainPanel, 1);
@@ -764,8 +768,9 @@ async function loadSelectedTrainLine(station, lineId, preferredDestination = sta
   try {
     const [allArrivals, lineStatus] = await Promise.all([getTrainArrivalsForLine(station, lineId), getLineStatus(lineId)]);
     const limit = getTrainResultLimit(lineId, station);
+    const usesDepartureBoard = lineId === "national-rail" && station.crs || shouldUseNationalRailDeparturesForLine(station, lineId);
     const arrivals =
-      lineId === "national-rail" && station.crs
+      usesDepartureBoard
         ? allArrivals.slice(0, limit)
         : filterArrivalsByLine(allArrivals, lineId).slice(0, limit);
     state.selectedTrainArrivals = arrivals;
@@ -1180,12 +1185,20 @@ async function getTrainArrivalsForLine(station, lineId) {
   if (lineId === "national-rail" && station.crs) {
     return getNationalRailArrivals(station.crs, NATIONAL_RAIL_RESULTS * 3);
   }
+  if (shouldUseNationalRailDeparturesForLine(station, lineId)) {
+    return getNationalRailArrivals(station.crs, SELECTED_TRAIN_ARRIVALS * 3, { operator: "elizabeth-line" });
+  }
 
   return getStationTrainArrivals(station.id);
 }
 
-async function getNationalRailArrivals(crs, limit) {
-  const data = await fetchJson(`/api/national-rail/arrivals?crs=${encodeURIComponent(crs)}&rows=${limit}`);
+async function getNationalRailArrivals(crs, limit, options = {}) {
+  const params = new URLSearchParams({
+    crs,
+    rows: String(limit),
+  });
+  if (options.operator) params.set("operator", options.operator);
+  const data = await fetchJson(`/api/national-rail/arrivals?${params.toString()}`);
   return data.arrivals || [];
 }
 
@@ -1977,7 +1990,12 @@ function formatTrainBoardName(lineId) {
 }
 
 function getTrainResultLimit(lineId, station) {
+  if (shouldUseNationalRailDeparturesForLine(station, lineId)) return SELECTED_TRAIN_ARRIVALS;
   return lineId === "national-rail" && station.crs ? NATIONAL_RAIL_RESULTS : SELECTED_TRAIN_ARRIVALS;
+}
+
+function shouldUseNationalRailDeparturesForLine(station, lineId) {
+  return lineId === "elizabeth" && Boolean(station?.crs);
 }
 
 function clampDelayMinutes(value) {
@@ -2864,7 +2882,8 @@ async function fetchScheduleNotificationLines(schedule) {
     name: schedule.title,
   };
   const allArrivals = await getTrainArrivalsForLine(station, schedule.lineId);
-  const arrivals = (schedule.lineId === "national-rail" && schedule.crs
+  const usesDepartureBoard = schedule.lineId === "national-rail" && schedule.crs || shouldUseNationalRailDeparturesForLine(station, schedule.lineId);
+  const arrivals = (usesDepartureBoard
     ? allArrivals
     : filterArrivalsByLine(allArrivals, schedule.lineId)
   )

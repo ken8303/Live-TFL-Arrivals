@@ -22,6 +22,9 @@ export async function onRequestGet(context) {
     const url = new URL(context.request.url);
     const crs = (url.searchParams.get("crs") || "").trim().toUpperCase();
     const rows = Math.min(Math.max(Number.parseInt(url.searchParams.get("rows") || "5", 10), 1), 10);
+    const operator = normaliseOperatorFilter(url.searchParams.get("operator"));
+    const includeElizabeth = operator === "elizabeth-line";
+    const requestedRows = includeElizabeth ? 50 : rows;
 
     if (!/^[A-Z]{3}$/.test(crs)) {
       return json({ error: "A valid 3-letter station CRS code is required." }, 400);
@@ -48,12 +51,15 @@ export async function onRequestGet(context) {
       );
     }
 
-    const xml = await requestDepartureBoardWithDetails(crs, rows, token);
+    const xml = await requestDepartureBoardWithDetails(crs, requestedRows, token);
+    const services = parseDarwinServices(xml, requestedRows)
+      .filter((service) => includeElizabeth ? isElizabethLineService(service) : !isElizabethLineService(service))
+      .slice(0, rows);
     return json({
       source: "National Rail Darwin",
       board: "departures",
       crs,
-      arrivals: parseDarwinServices(xml, rows).filter((service) => !isElizabethLineService(service)),
+      arrivals: services,
     });
   } catch (error) {
     console.error(error);
@@ -154,6 +160,11 @@ function getCallingPoints(service) {
 
 function isElizabethLineService(service) {
   return String(service.lineName || "").trim().toLowerCase() === "elizabeth line";
+}
+
+function normaliseOperatorFilter(value) {
+  const operator = String(value || "").trim().toLowerCase();
+  return ["elizabeth", "elizabeth-line", "elizabeth line"].includes(operator) ? "elizabeth-line" : "";
 }
 
 function getExpectedDate(expected, scheduled) {
