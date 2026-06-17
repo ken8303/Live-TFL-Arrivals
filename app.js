@@ -95,7 +95,16 @@ const TRAIN_STATIONS = [
   },
 ];
 const NATIONAL_RAIL_FALLBACK_STATIONS = [
-  { name: "Reading", crs: "RDG", lat: 51.459069, lon: -0.972051 },
+  {
+    name: "Reading",
+    crs: "RDG",
+    lat: 51.459069,
+    lon: -0.972051,
+    lines: [
+      { id: "elizabeth", name: "Elizabeth line" },
+      { id: "national-rail", name: "National Rail" },
+    ],
+  },
   { name: "Reading West", crs: "RDW", lat: 51.455578, lon: -0.99012 },
   { name: "Tilehurst", crs: "TLH", lat: 51.47153, lon: -1.029842 },
   { name: "Twyford", crs: "TWY", lat: 51.475528, lon: -0.863293 },
@@ -613,7 +622,7 @@ async function loadNearbyTrainStationsForSelection(location, preferredStationId 
       setStatus(`No train stations were found within 1 km of ${location.label || "this location"}.`, "error");
       return;
     }
-    const preferredIndex = preferredStationId ? stations.findIndex((station) => station.id === preferredStationId) : -1;
+    const preferredIndex = preferredStationId ? stations.findIndex((station) => matchesPreferredTrainStation(station, preferredStationId)) : -1;
     if (preferredIndex >= 0) {
       trainStationSelect.value = String(preferredIndex);
       shouldScheduleRefresh = false;
@@ -1839,7 +1848,7 @@ function makeNationalRailFallbackStation(station, distance = null) {
     lat: station.lat,
     lon: station.lon,
     distance,
-    lines: [{ id: "national-rail", name: "National Rail" }],
+    lines: station.lines || [{ id: "national-rail", name: "National Rail" }],
     provider: "national-rail",
   };
 }
@@ -1903,6 +1912,13 @@ function mergeTrainStationOptions(...stationGroups) {
   return [...byKey.values()];
 }
 
+function matchesPreferredTrainStation(station, preferredStationId) {
+  if (!station || !preferredStationId) return false;
+  if (station.id === preferredStationId || station.naptanId === preferredStationId) return true;
+  const preferredCrs = String(preferredStationId).startsWith("NR:") ? String(preferredStationId).slice(3) : "";
+  return Boolean(preferredCrs && station.crs === preferredCrs);
+}
+
 function isNationalRailOnlyStation(station) {
   return station?.provider === "national-rail" || (station?.crs && String(station.id || "").startsWith("NR:"));
 }
@@ -1924,7 +1940,7 @@ function setSelectedStopStatus(stop, arrivalCount) {
 
 function setTrainStationStatus(station, lineId, arrivalCount, lineStatus) {
   const lineName = lineStatus?.name || formatLineName(lineId);
-  const boardType = lineId === "national-rail" && station.crs ? "departures" : "arrivals";
+  const boardType = lineId === "national-rail" && station.crs || shouldUseNationalRailDeparturesForLine(station, lineId) ? "departures" : "arrivals";
   if (arrivalCount > 0) {
     setStatus(`Showing next ${arrivalCount} ${lineName} ${boardType} at ${station.name}.`, "ready");
   } else {

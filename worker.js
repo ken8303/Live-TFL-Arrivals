@@ -13,7 +13,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-06-17-tfl-secret-proxy";
+const APP_VERSION = "2026-06-17-reading-line-options";
 
 export default {
   async fetch(request, env) {
