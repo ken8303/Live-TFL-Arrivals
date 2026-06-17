@@ -13,7 +13,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-06-17-reading-line-options";
+const APP_VERSION = "2026-06-17-cache-refresh";
 
 export default {
   async fetch(request, env) {
@@ -72,7 +72,7 @@ export default {
       );
     }
 
-    return withVersionHeader(await env.ASSETS.fetch(request));
+    return withVersionHeader(await env.ASSETS.fetch(request), request);
   },
 
   async scheduled(controller, env, ctx) {
@@ -80,12 +80,21 @@ export default {
   },
 };
 
-function withVersionHeader(response) {
+function withVersionHeader(response, request = null) {
   const headers = new Headers(response.headers);
   headers.set("x-app-version", APP_VERSION);
+  if (shouldBypassBrowserCache(request)) {
+    headers.set("Cache-Control", "no-store, max-age=0");
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
+}
+
+function shouldBypassBrowserCache(request) {
+  if (!request) return false;
+  const { pathname } = new URL(request.url);
+  return pathname === "/" || pathname === "/index.html" || pathname === "/app.js" || pathname === "/service-worker.js";
 }
