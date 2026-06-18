@@ -1815,7 +1815,7 @@ function normalizeNearbyTrainStations(stops) {
       crs: stop.crs || existing?.crs || getKnownNationalRailCrs(stop, stationId),
       lat: Number.isFinite(stop.lat) ? stop.lat : existing?.lat ?? null,
       lon: Number.isFinite(stop.lon) ? stop.lon : existing?.lon ?? null,
-      lines: (stop.lines || []).filter((line) => STATION_MODES.has(line.id)),
+      lines: normalizeTrainStationLines(stop),
     };
 
     if (!existing || isTopLevelStop) {
@@ -1836,6 +1836,21 @@ function normalizeNearbyTrainStations(stops) {
   });
 
   return [...stationsById.values()].sort((a, b) => (a.distance ?? Number.MAX_VALUE) - (b.distance ?? Number.MAX_VALUE));
+}
+
+function normalizeTrainStationLines(stop) {
+  const nationalRailLineIds = new Set(
+    (stop.lineModeGroups || [])
+      .filter((group) => group.modeName === "national-rail")
+      .flatMap((group) => group.lineIdentifier || []),
+  );
+  const lines = (stop.lines || []).filter((line) => line?.id && !nationalRailLineIds.has(line.id));
+
+  if ((stop.modes || []).includes("national-rail") || nationalRailLineIds.size > 0) {
+    lines.push({ id: "national-rail", name: "National Rail" });
+  }
+
+  return mergeTrainLines(lines);
 }
 
 function makeNationalRailFallbackStation(station, distance = null) {
