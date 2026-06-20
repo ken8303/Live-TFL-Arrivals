@@ -13,7 +13,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-06-20-reliability";
+const APP_VERSION = "2026-06-20-hardening";
 
 export default {
   async fetch(request, env) {
@@ -83,6 +83,9 @@ export default {
 function withVersionHeader(response, request = null) {
   const headers = new Headers(response.headers);
   headers.set("x-app-version", APP_VERSION);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  headers.set("Permissions-Policy", "geolocation=(self), camera=(), microphone=(), payment=(), usb=(), browsing-topics=()");
   if (shouldBypassBrowserCache(request)) {
     headers.set("Cache-Control", "no-store, max-age=0");
   }

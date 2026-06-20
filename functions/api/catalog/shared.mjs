@@ -3,50 +3,43 @@ const TFL_API_BASE = "https://api.tfl.gov.uk";
 const READING_API_BASE = "https://reading-opendata.r2p.com/api/v1";
 const PAGE_LIMIT = 1000;
 const MAX_PAGES = 120;
+const CATALOG_CACHE_VERSION = "v1";
 
 const busCache = { updatedAt: 0, items: null, pending: null };
 const readingBusCache = { updatedAt: 0, items: null, pending: null };
 const trainCache = { updatedAt: 0, items: null, pending: null };
 
 export async function getCachedBusStops(env = {}) {
-  return getCachedCatalog(busCache, () => fetchBusStops(env));
+  return getCachedCatalog(busCache, "tfl-bus-stops", () => fetchBusStops(env));
 }
 
 export async function getCachedTrainStations(env = {}) {
-  return getCachedCatalog(trainCache, () => fetchTrainStations(env));
+  return getCachedCatalog(trainCache, "tfl-train-stations", () => fetchTrainStations(env));
 }
 
 export async function getCachedReadingBusStops(env = {}) {
-  return getCachedCatalog(readingBusCache, () => fetchReadingBusStops(env));
+  return getCachedCatalog(readingBusCache, "reading-bus-stops", () => fetchReadingBusStops(env));
 }
 
-export async function getReadingBusStopsDebug(env = {}) {
-  const payload = await fetchReadingBusStopPayload(env);
-  const items = findReadingStopItems(payload);
-  const normalised = items.map(normaliseReadingBusStop);
-  return {
-    payloadType: Array.isArray(payload) ? "array" : typeof payload,
-    payloadKeys: payload && typeof payload === "object" && !Array.isArray(payload) ? Object.keys(payload).slice(0, 30) : [],
-    rawCount: items.length,
-    normalisedCount: normalised.length,
-    validCount: normalised.filter((stop) => (stop.id || stop.naptanId) && Number.isFinite(stop.lat) && Number.isFinite(stop.lon)).length,
-    sampleKeys: items.slice(0, 3).map((item) => item && typeof item === "object" ? Object.keys(item).slice(0, 30) : []),
-    sampleNormalised: normalised.slice(0, 3),
-  };
-}
-
-async function getCachedCatalog(cache, load) {
+async function getCachedCatalog(cache, cacheName, load) {
   const now = Date.now();
   if (cache.items && now - cache.updatedAt < DAY_MS) {
     return { updatedAt: new Date(cache.updatedAt).toISOString(), items: cache.items };
   }
 
   if (!cache.pending) {
-    cache.pending = load()
-      .then((items) => {
-        cache.items = items;
-        cache.updatedAt = Date.now();
-        return { updatedAt: new Date(cache.updatedAt).toISOString(), items };
+    cache.pending = loadPersistentCatalog(cacheName)
+      .then(async (stored) => {
+        if (stored) return stored;
+        const items = await load();
+        const result = { updatedAt: new Date().toISOString(), items };
+        await storePersistentCatalog(cacheName, result);
+        return result;
+      })
+      .then((result) => {
+        cache.items = result.items;
+        cache.updatedAt = Date.parse(result.updatedAt) || Date.now();
+        return { updatedAt: new Date(cache.updatedAt).toISOString(), items: cache.items };
       })
       .finally(() => {
         cache.pending = null;
@@ -54,6 +47,48 @@ async function getCachedCatalog(cache, load) {
   }
 
   return cache.pending;
+}
+
+async function loadPersistentCatalog(cacheName) {
+  const cacheStorage = getCloudflareCache();
+  if (!cacheStorage) return null;
+
+  try {
+    const response = await cacheStorage.match(getCatalogCacheKey(cacheName));
+    if (!response?.ok) return null;
+    const data = await response.json();
+    if (!data?.updatedAt || !Array.isArray(data.items)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function storePersistentCatalog(cacheName, data) {
+  const cacheStorage = getCloudflareCache();
+  if (!cacheStorage) return;
+
+  try {
+    await cacheStorage.put(
+      getCatalogCacheKey(cacheName),
+      Response.json(data, {
+        headers: {
+          "Cache-Control": `public, max-age=${DAY_MS / 1000}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }),
+    );
+  } catch (error) {
+    console.warn(`Could not persist ${cacheName} catalog cache`, error);
+  }
+}
+
+function getCloudflareCache() {
+  return globalThis.caches?.default || null;
+}
+
+function getCatalogCacheKey(cacheName) {
+  return new Request(`https://catalog-cache.invalid/${CATALOG_CACHE_VERSION}/${encodeURIComponent(cacheName)}`);
 }
 
 async function fetchBusStops(env) {

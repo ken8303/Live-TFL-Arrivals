@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "check": "node --check app.js && node --check public/app.js && node --check server.js && node --check worker.js && node --check service-worker.js && node --check public/service-worker.js && node --check functions/api/push.js && node --check functions/api/national-rail/arrivals.js",
+    "check": "node --check app.js && node --check public/app.js && node --check server.js && node --check worker.js && node --check service-worker.js && node --check public/service-worker.js && node --check functions/api/push.js && node --check functions/api/national-rail/arrivals.js && node --check functions/api/catalog/shared.mjs",
     "test": "node --test tests/*.test.mjs"
   }
 }

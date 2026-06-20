@@ -1,13 +1,10 @@
-import { getCachedBusStops, getCachedReadingBusStops, getReadingBusStopsDebug } from "./shared.mjs";
+import { getCachedBusStops, getCachedReadingBusStops } from "./shared.mjs";
 
 export async function onRequestGet({ env, request }) {
   try {
     const url = new URL(request.url);
     const provider = url.searchParams.get("provider") || "tfl";
     if (provider === "reading-buses") {
-      if (url.searchParams.get("debug") === "1") {
-        return Response.json(await getReadingBusStopsDebug(env));
-      }
       return Response.json(await getCachedReadingBusStops(env));
     }
     return Response.json(await getCachedBusStops(env));
