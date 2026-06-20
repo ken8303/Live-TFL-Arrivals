@@ -1,5 +1,11 @@
 import { onRequestGet as getNationalRailArrivals } from "./national-rail/arrivals.js";
 import { onRequestGet as getReadingBusPredictions } from "./reading-buses/predictions.js";
+import {
+  getDueMinuteKeyFromScheduleKey,
+  getScheduleKey,
+  normaliseTimeZone,
+  parseScheduleKey,
+} from "./push-schedule-key.mjs";
 
 const API_BASE = "https://api.tfl.gov.uk";
 const SCHEDULE_PREFIX = "schedule:";
@@ -9,8 +15,6 @@ const MAX_PUSH_LINES = 3;
 const MAX_SCHEDULES_PER_SUBSCRIPTION = 20;
 const MAX_SCHEDULE_PAGE_COUNT = 1000;
 const MAX_SCHEDULE_BATCH_SIZE = 10;
-const SCHEDULE_CATCHUP_MINUTES = 8;
-const LONDON_TIME_ZONE = "Europe/London";
 const ALLOWED_PUSH_HOSTS = new Set([
   "updates.push.services.mozilla.com",
   "fcm.googleapis.com",
@@ -45,7 +49,7 @@ export async function savePushSchedule({ request, env }) {
 
   const endpointHash = await sha256(subscription.endpoint);
   const meta = await getEndpointMeta(env, endpointHash);
-  const key = getScheduleKey(endpointHash, schedule);
+  const key = getScheduleKey(endpointHash, schedule, timeZone);
   const existingKey = meta.schedules[schedule.id] || getLegacyScheduleKey(endpointHash, schedule.id);
   const existing = existingKey ? await env.PUSH_SCHEDULES.get(existingKey, "json") : null;
   const clientTokenHash = await sha256(clientToken);
@@ -145,20 +149,24 @@ export async function runScheduledPush(_controller, env) {
     const page = await env.PUSH_SCHEDULES.list({ prefix: SCHEDULE_PREFIX, cursor, limit: MAX_SCHEDULE_PAGE_COUNT });
     cursor = page.cursor;
     const dueKeys = page.keys
-      .map((item) => ({ name: item.name, dueKey: getDueMinuteKeyFromScheduleKey(item.name, LONDON_TIME_ZONE) }))
+      .map((item) => ({ name: item.name, dueKey: getDueMinuteKeyFromScheduleKey(item.name) }))
       .filter((item) => item.dueKey);
     for (let index = 0; index < dueKeys.length; index += MAX_SCHEDULE_BATCH_SIZE) {
       const batch = dueKeys.slice(index, index + MAX_SCHEDULE_BATCH_SIZE);
-      await Promise.all(batch.map((item) => processStoredSchedule(item.name, env, item.dueKey)));
+      const results = await Promise.all(batch.map((item) => processStoredSchedule(item.name, env, item.dueKey)));
+      await cleanupExpiredScheduleMetadata(
+        results.filter((result) => result?.gone).map((result) => result.key),
+        env,
+      );
     }
   } while (cursor);
 }
 
 async function processStoredSchedule(key, env, dueKey) {
   const stored = await env.PUSH_SCHEDULES.get(key, "json");
-  if (!stored?.subscription || !stored?.schedule) return;
+  if (!stored?.subscription || !stored?.schedule) return null;
 
-  if (!dueKey || stored.lastFiredKey === dueKey) return;
+  if (!dueKey || stored.lastFiredKey === dueKey) return null;
 
   const body = await getScheduleBody(stored.schedule, env);
   const result = await sendWebPush(
@@ -173,7 +181,7 @@ async function processStoredSchedule(key, env, dueKey) {
 
   if (result.gone) {
     await env.PUSH_SCHEDULES.delete(key);
-    return;
+    return { gone: true, key };
   }
 
   if (result.ok) {
@@ -181,57 +189,7 @@ async function processStoredSchedule(key, env, dueKey) {
     stored.lastFiredAt = new Date().toISOString();
     await env.PUSH_SCHEDULES.put(key, JSON.stringify(stored));
   }
-}
-
-function getDueMinuteKeyFromScheduleKey(key, timeZone) {
-  const parsed = parseScheduleKey(key);
-  if (!parsed) return "";
-  return getDueMinuteKeyForTime(parsed.time, parsed.weekdayMask, timeZone);
-}
-
-function getDueMinuteKeyForTime(time, weekdayMask, timeZone) {
-  const now = new Date();
-  const parts = getTimeZoneParts(now, timeZone);
-  if (!parts || !isValidTime(time) || !weekdayMask) return "";
-  const currentMinutes = Number(parts.hour) * 60 + Number(parts.minute);
-  const [scheduleHour, scheduleMinute] = time.split(":").map(Number);
-  const scheduleMinutes = scheduleHour * 60 + scheduleMinute;
-  if ((weekdayMask & (1 << parts.weekday)) && currentMinutes >= scheduleMinutes && currentMinutes <= scheduleMinutes + SCHEDULE_CATCHUP_MINUTES) {
-    return `${parts.year}-${parts.month}-${parts.day}T${time}`;
-  }
-
-  const previousParts = getTimeZoneParts(new Date(now.getTime() - 24 * 60 * 60_000), timeZone);
-  if (!previousParts || !(weekdayMask & (1 << previousParts.weekday))) return "";
-  const minutesAfterPreviousDaySchedule = currentMinutes + 24 * 60 - scheduleMinutes;
-  if (minutesAfterPreviousDaySchedule < 0 || minutesAfterPreviousDaySchedule > SCHEDULE_CATCHUP_MINUTES) return "";
-
-  return `${previousParts.year}-${previousParts.month}-${previousParts.day}T${time}`;
-}
-
-function getTimeZoneParts(date, timeZone) {
-  try {
-    const formatter = new Intl.DateTimeFormat("en-GB", {
-      timeZone,
-      weekday: "short",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    });
-    const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
-    return {
-      year: parts.year,
-      month: parts.month,
-      day: parts.day,
-      hour: parts.hour,
-      minute: parts.minute,
-      weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday),
-    };
-  } catch {
-    return null;
-  }
+  return { gone: false, key };
 }
 
 function validateWriteRequest(request) {
@@ -293,7 +251,7 @@ async function getTrainLines(schedule, env) {
     .filter((arrival) => !schedule.destination || cleanName(arrival.destinationName) === schedule.destination)
     .sort((a, b) => a.timeToStation - b.timeToStation)
     .slice(0, MAX_PUSH_LINES)
-    .map((arrival) => `${arrival.lineName || schedule.lineName || "Train"} ${cleanName(arrival.destinationName)} ${formatEta(arrival.timeToStation)}`);
+    .map((arrival) => `${arrival.lineName || schedule.lineName || "Train"} ${cleanName(arrival.destinationName)} ${formatEta(arrival.timeToStation, arrival.serviceStatus)}`);
 }
 
 async function getReadingBusArrivals(location, env) {
@@ -532,15 +490,6 @@ function isBase64UrlToken(value, minLength, maxLength) {
   return value.length >= minLength && value.length <= maxLength && /^[a-zA-Z0-9_-]+$/.test(value);
 }
 
-function normaliseTimeZone(timeZone) {
-  try {
-    new Intl.DateTimeFormat("en-GB", { timeZone });
-    return timeZone;
-  } catch {
-    return LONDON_TIME_ZONE;
-  }
-}
-
 async function getEndpointMeta(env, endpointHash) {
   const meta = await env.PUSH_SCHEDULES.get(getEndpointMetaKey(endpointHash), "json");
   const schedules = meta?.schedules && typeof meta.schedules === "object" ? meta.schedules : {};
@@ -566,48 +515,38 @@ function getEndpointMetaKey(endpointHash) {
   return `${ENDPOINT_META_PREFIX}${endpointHash}`;
 }
 
-function getScheduleKey(endpointHash, schedule) {
-  return [
-    SCHEDULE_PREFIX.slice(0, -1),
-    endpointHash,
-    normaliseScheduleId(schedule.id),
-    getScheduleTimeKey(schedule.time),
-    getWeekdayMask(schedule.weekdays),
-  ].join(":");
-}
-
 function getLegacyScheduleKey(endpointHash, scheduleId) {
   return `${SCHEDULE_PREFIX}${endpointHash}:${normaliseScheduleId(scheduleId)}`;
 }
 
-function parseScheduleKey(key) {
-  const parts = String(key || "").split(":");
-  if (parts.length !== 5 || `${parts[0]}:` !== SCHEDULE_PREFIX) return null;
-  const [, endpointHash, scheduleId, timeKey, weekdayMaskText] = parts;
-  if (!endpointHash || !scheduleId || !/^\d{4}$/.test(timeKey)) return null;
-  const weekdayMask = Number.parseInt(weekdayMaskText, 10);
-  if (!Number.isFinite(weekdayMask) || weekdayMask <= 0 || weekdayMask > 127) return null;
-  const time = `${timeKey.slice(0, 2)}:${timeKey.slice(2)}`;
-  if (!isValidTime(time)) return null;
-  return { endpointHash, scheduleId, time, weekdayMask };
-}
+async function cleanupExpiredScheduleMetadata(keys, env) {
+  const byEndpoint = new Map();
+  keys.forEach((key) => {
+    const parsed = parseScheduleKey(key);
+    if (!parsed) return;
+    const schedules = byEndpoint.get(parsed.endpointHash) || [];
+    schedules.push({ id: parsed.scheduleId, key });
+    byEndpoint.set(parsed.endpointHash, schedules);
+  });
 
-function getScheduleTimeKey(time) {
-  return String(time || "").replace(":", "");
-}
-
-function getWeekdayMask(weekdays) {
-  return (Array.isArray(weekdays) ? weekdays : [])
-    .map((day) => Number.parseInt(day, 10))
-    .filter((day) => day >= 0 && day <= 6)
-    .reduce((mask, day) => mask | (1 << day), 0);
+  for (const [endpointHash, schedules] of byEndpoint) {
+    const meta = await getEndpointMeta(env, endpointHash);
+    schedules.forEach(({ id, key }) => {
+      if (meta.schedules[id] === key) delete meta.schedules[id];
+    });
+    meta.count = Object.keys(meta.schedules).length;
+    meta.updatedAt = new Date().toISOString();
+    await putEndpointMeta(env, endpointHash, meta);
+  }
 }
 
 function cleanName(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function formatEta(seconds) {
+function formatEta(seconds, serviceStatus = "") {
+  if (serviceStatus === "cancelled") return "cancelled";
+  if (serviceStatus === "delayed") return "delayed";
   const minutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
   if (minutes <= 0) return "due";
   if (minutes === 1) return "1 min";

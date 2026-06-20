@@ -126,6 +126,7 @@ function parseDarwinServices(xml, rows) {
     const expected = getTagText(service, "etd") || getTagText(service, "std");
     const scheduled = getTagText(service, "std");
     const platform = getTagText(service, "platform");
+    const serviceStatus = getServiceStatus(expected);
 
     return {
       modeName: "national-rail",
@@ -135,7 +136,9 @@ function parseDarwinServices(xml, rows) {
       platformName: platform ? `Platform ${platform}` : "",
       callingPoints: getCallingPoints(service),
       expectedArrival: getExpectedDate(expected, scheduled),
+      scheduledArrival: getExpectedDate(scheduled, scheduled),
       timeToStation: getTimeToStation(expected, scheduled),
+      serviceStatus,
     };
   });
 }
@@ -193,6 +196,15 @@ function normaliseTime(expected, scheduled) {
   if (expected && expected.toLowerCase() === "on time" && /^\d{2}:\d{2}$/.test(scheduled)) return scheduled;
   if (/^\d{2}:\d{2}$/.test(scheduled)) return scheduled;
   return "";
+}
+
+function getServiceStatus(expected) {
+  const value = String(expected || "").trim().toLowerCase();
+  if (value === "cancelled") return "cancelled";
+  if (value === "delayed") return "delayed";
+  if (value === "on time") return "on-time";
+  if (/^\d{2}:\d{2}$/.test(value)) return "estimated";
+  return "scheduled";
 }
 
 function getLondonDateParts(date) {
@@ -270,3 +282,5 @@ function json(data, status = 200) {
     },
   });
 }
+
+export { getServiceStatus, normaliseTime, parseDarwinServices };

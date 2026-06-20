@@ -478,30 +478,44 @@ async function loadNearby(location) {
       return;
     }
 
-    const candidatesWithArrivals = await Promise.all(
+    const busResults = await Promise.allSettled(
       stops.map(async (stop) => ({
         stop,
         arrivals: await getBusArrivals(stop),
       })),
     );
+    const candidatesWithArrivals = busResults
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value);
     const liveStops = candidatesWithArrivals.filter(({ arrivals }) => arrivals.length > 0);
     const emptyStops = candidatesWithArrivals.filter(({ arrivals }) => arrivals.length === 0);
     const stopsWithArrivals = [...liveStops, ...emptyStops].slice(0, options.busCount);
 
-    const candidatesWithDepartures = await Promise.all(
+    const trainResults = await Promise.allSettled(
       stations.map(async (stop) => ({
         stop,
         arrivals: await getLiveTrainArrivals(stop),
       })),
     );
+    const candidatesWithDepartures = trainResults
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value);
     const liveStations = candidatesWithDepartures.filter(({ arrivals }) => arrivals.length > 0);
     const emptyStations = candidatesWithDepartures.filter(({ arrivals }) => arrivals.length === 0);
     const stationsWithDepartures = [...liveStations, ...emptyStations].slice(0, options.trainCount);
+    const failedFeedCount =
+      busResults.filter((result) => result.status === "rejected").length +
+      trainResults.filter((result) => result.status === "rejected").length;
+
+    if (!candidatesWithArrivals.length && !candidatesWithDepartures.length && failedFeedCount > 0) {
+      throw new Error("All nearby arrival feeds failed.");
+    }
 
     if (options.showBus) renderStops(stopsWithArrivals);
     if (options.showTrain) renderStations(stationsWithDepartures);
     updateLiveMap(location, buildLiveMapPoints(stopsWithArrivals, stationsWithDepartures, options));
-    setStatus(formatResultStatus(stopsWithArrivals.length, stationsWithDepartures.length, options), "ready");
+    const partialWarning = failedFeedCount > 0 ? ` ${failedFeedCount} live feed${failedFeedCount === 1 ? "" : "s"} could not be loaded.` : "";
+    setStatus(`${formatResultStatus(stopsWithArrivals.length, stationsWithDepartures.length, options)}${partialWarning}`, "ready");
     lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
@@ -780,7 +794,7 @@ async function loadSelectedTrainLine(station, lineId, preferredDestination = sta
     const usesDepartureBoard = lineId === "national-rail" && station.crs || shouldUseNationalRailDeparturesForLine(station, lineId);
     const arrivals =
       usesDepartureBoard
-        ? allArrivals.slice(0, limit)
+        ? allArrivals.filter((arrival) => isAfterDelay(arrival.timeToStation)).slice(0, limit)
         : filterArrivalsByLine(allArrivals, lineId).slice(0, limit);
     state.selectedTrainArrivals = arrivals;
     syncTrainDestinationSelect();
@@ -1184,7 +1198,9 @@ async function getStationTrainArrivals(stationId) {
 
 async function getLiveTrainArrivals(station) {
   if (isNationalRailOnlyStation(station) && station.crs) {
-    return getNationalRailArrivals(station.crs, MAX_ARRIVALS);
+    return (await getNationalRailArrivals(station.crs, MAX_ARRIVALS * 3))
+      .filter((arrival) => isAfterDelay(arrival.timeToStation))
+      .slice(0, MAX_ARRIVALS);
   }
 
   return getArrivals(station.id || station.naptanId, "train");
@@ -1398,7 +1414,7 @@ function renderCard({ stop, arrivals, type, origin = null, boardStation = null, 
           ${formatCallingPoints(arrival)}
         </span>
         <span class="eta-block">
-          <span class="eta">${formatEta(arrival.timeToStation)}</span>
+          <span class="eta">${formatEta(arrival.timeToStation, arrival.serviceStatus)}</span>
           ${formatPlatformDisplay(arrival)}
         </span>
       `;
@@ -2982,7 +2998,7 @@ async function fetchScheduleNotificationLines(schedule) {
     .filter((arrival) => !schedule.destination || cleanStationName(arrival.destinationName || "") === schedule.destination)
     .slice(0, 3);
 
-  return arrivals.map((arrival) => `${arrival.lineName || schedule.lineName} ${cleanStationName(arrival.destinationName || "")} ${formatEta(arrival.timeToStation)}`);
+  return arrivals.map((arrival) => `${arrival.lineName || schedule.lineName} ${cleanStationName(arrival.destinationName || "")} ${formatEta(arrival.timeToStation, arrival.serviceStatus)}`);
 }
 
 function startAutoRefresh() {
@@ -3116,6 +3132,12 @@ function formatDestinationText(arrival, boardStation) {
 function formatJourneyDetail(arrival, boardStation) {
   const time = formatExpectedTime(arrival.expectedArrival);
   if (arrival.modeName === "national-rail" && boardStation) {
+    if (arrival.serviceStatus === "cancelled") {
+      return `Cancelled - scheduled to leave ${boardStation.name} at ${formatExpectedTime(arrival.scheduledArrival)}`;
+    }
+    if (arrival.serviceStatus === "delayed") {
+      return `Delayed - scheduled to leave ${boardStation.name} at ${formatExpectedTime(arrival.scheduledArrival)}`;
+    }
     return `Leaves ${boardStation.name} at ${time}`;
   }
   const platform = formatPlatform(arrival.platformName);
@@ -3158,7 +3180,9 @@ function cleanStationName(name) {
     .replace(/\s+Station$/i, "");
 }
 
-function formatEta(seconds) {
+function formatEta(seconds, serviceStatus = "") {
+  if (serviceStatus === "cancelled") return "Cancelled";
+  if (serviceStatus === "delayed") return "Delayed";
   if (!Number.isFinite(seconds)) return "--";
   const minutes = Math.max(0, Math.round(seconds / 60));
   return minutes <= 1 ? "Due" : `${minutes}m`;
