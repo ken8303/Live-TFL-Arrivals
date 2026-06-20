@@ -71,6 +71,7 @@ export async function savePushSchedule({ request, env }) {
       timeZone,
       clientTokenHash,
       lastFiredKey: existing?.lastFiredKey || "",
+      alertState: existing?.alertState || {},
       updatedAt: new Date().toISOString(),
     }),
   );
@@ -168,12 +169,19 @@ async function processStoredSchedule(key, env, dueKey) {
 
   if (!dueKey || stored.lastFiredKey === dueKey) return null;
 
-  const body = await getScheduleBody(stored.schedule, env);
+  const notification = await getScheduleNotification(stored.schedule, env, stored.alertState);
+  stored.alertState = notification.alertState;
+  if (!notification.body) {
+    stored.lastFiredKey = dueKey;
+    stored.lastFiredAt = new Date().toISOString();
+    await env.PUSH_SCHEDULES.put(key, JSON.stringify(stored));
+    return { gone: false, key };
+  }
   const result = await sendWebPush(
     stored.subscription,
     {
       title: stored.schedule.title || "Live TfL Arrivals",
-      body,
+      body: notification.body,
       url: normaliseSameOriginPath(stored.schedule.pageUrl),
     },
     env,
@@ -216,15 +224,95 @@ function isSameOriginPost(request) {
   }
 }
 
-async function getScheduleBody(schedule, env) {
+async function getScheduleNotification(schedule, env, previousAlertState = {}) {
   try {
+    if (schedule.alertOnly) {
+      return getScheduleAlerts(schedule, env, previousAlertState);
+    }
     const lines = schedule.type === "bus" ? await getBusLines(schedule, env) : await getTrainLines(schedule, env);
-    return lines.length
-      ? lines.join(" | ")
-      : `No live ${schedule.type === "bus" ? "bus" : "train"} times are available right now.`;
+    return {
+      body: lines.length
+        ? lines.join(" | ")
+        : `No live ${schedule.type === "bus" ? "bus" : "train"} times are available right now.`,
+      alertState: previousAlertState,
+    };
   } catch (error) {
-    return error.message || "Live transport times could not be loaded.";
+    return {
+      body: schedule.alertOnly ? "" : error.message || "Live transport times could not be loaded.",
+      alertState: previousAlertState,
+    };
   }
+}
+
+async function getScheduleAlerts(schedule, env, previousAlertState) {
+  const arrivals = schedule.type === "bus"
+    ? schedule.provider === "reading-buses"
+      ? await getReadingBusArrivals(schedule.stopId, env)
+      : await getTflArrivals(schedule.stopId, "bus", env)
+    : shouldUseNationalRailDeparturesForLine(schedule)
+      ? await getNationalRailScheduleArrivals(schedule.crs, env, schedule.lineId === "elizabeth" ? "elizabeth-line" : "")
+      : await getTflArrivals(schedule.stationId, "train", env);
+  const filteredArrivals = arrivals
+    .filter((arrival) => !schedule.route || String(arrival.lineName || arrival.lineId) === schedule.route)
+    .filter((arrival) => schedule.type !== "train" || shouldUseNationalRailDeparturesForLine(schedule) || arrival.lineId === schedule.lineId || arrival.modeName === schedule.lineId)
+    .filter((arrival) => !schedule.destination || cleanName(arrival.destinationName) === schedule.destination);
+  const disruption = await getLineDisruption(schedule, env);
+  return buildTransportAlertResult(filteredArrivals, schedule, previousAlertState, disruption);
+}
+
+function getArrivalAlertKey(arrival) {
+  const directId = cleanName(arrival.vehicleId || arrival.id);
+  if (directId) return directId;
+  const parts = [
+    arrival.lineId || arrival.lineName,
+    cleanName(arrival.destinationName),
+    arrival.scheduledArrival || arrival.expectedArrival,
+  ].map(cleanName);
+  return parts.some(Boolean) ? parts.join("|") : "";
+}
+
+export function buildTransportAlertResult(arrivals, schedule = {}, previousAlertState = {}, disruption = "", checkedAt = new Date().toISOString()) {
+  const alerts = [];
+  const nextPlatforms = {};
+
+  arrivals.forEach((arrival) => {
+    const destination = cleanName(arrival.destinationName);
+    const service = `${arrival.lineName || schedule.lineName || "Service"}${destination ? ` to ${destination}` : ""}`;
+    if (arrival.serviceStatus === "cancelled") alerts.push(`${service} cancelled`);
+    if (arrival.serviceStatus === "delayed") alerts.push(`${service} delayed`);
+
+    const key = getArrivalAlertKey(arrival);
+    const platform = cleanName(arrival.platformName);
+    if (!key || !platform) return;
+    nextPlatforms[key] = platform;
+    const previousPlatform = previousAlertState?.platforms?.[key];
+    if (previousPlatform && previousPlatform !== platform) {
+      alerts.push(`${arrival.lineName || schedule.lineName || "Service"} platform changed from ${previousPlatform} to ${platform}`);
+    }
+  });
+
+  if (disruption) alerts.push(disruption);
+  return {
+    body: [...new Set(alerts)].slice(0, MAX_PUSH_LINES).join(" | "),
+    alertState: {
+      platforms: nextPlatforms,
+      checkedAt,
+    },
+  };
+}
+
+async function getLineDisruption(schedule, env) {
+  const lineId = schedule.type === "bus" ? schedule.route : schedule.lineId;
+  if (!lineId || lineId === "national-rail" || schedule.provider === "reading-buses") return "";
+  const url = new URL(`${API_BASE}/Line/${encodeURIComponent(lineId)}/Status`);
+  if (env.TFL_APP_KEY) url.searchParams.set("app_key", env.TFL_APP_KEY);
+  if (env.TFL_APP_ID) url.searchParams.set("app_id", env.TFL_APP_ID);
+  const response = await fetch(url);
+  if (!response.ok) return "";
+  const status = (await response.json())?.[0]?.lineStatuses?.[0];
+  const description = cleanName(status?.statusSeverityDescription);
+  if (!description || description.toLowerCase() === "good service") return "";
+  return `${schedule.lineName || lineId}: ${description}${status?.reason ? ` - ${cleanName(status.reason)}` : ""}`;
 }
 
 async function getBusLines(schedule, env) {
@@ -450,6 +538,7 @@ function normaliseSchedule(schedule) {
     crs: String(schedule.crs || "").slice(0, 3).toUpperCase(),
     lineId: String(schedule.lineId || "").slice(0, 80),
     lineName: String(schedule.lineName || "").slice(0, 120),
+    alertOnly: Boolean(schedule.alertOnly),
     pageUrl: normaliseSameOriginPath(schedule.pageUrl),
   };
 }

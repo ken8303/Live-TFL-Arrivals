@@ -99,7 +99,7 @@ h1 {
   left: max(12px, env(safe-area-inset-left));
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   max-width: 560px;
   padding: 8px;
@@ -473,6 +473,24 @@ select:focus {
   min-width: 108px;
 }
 
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.icon-text-button {
+  width: auto;
+  min-width: 126px;
+}
+
+.icon-text-button[aria-pressed="true"] {
+  color: var(--blue);
+  background: rgba(0, 94, 184, 0.08);
+  border-color: rgba(0, 94, 184, 0.35);
+}
+
 .card-grid {
   display: grid;
   gap: 16px;
@@ -635,6 +653,54 @@ select:focus {
   box-shadow: 0 0 0 3px rgba(0, 94, 184, 0.16);
 }
 
+.mode-segments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mode-segment {
+  display: block;
+}
+
+.mode-segment input {
+  position: absolute;
+  width: 1px !important;
+  min-width: 0;
+  height: 1px !important;
+  min-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mode-segment span {
+  display: grid;
+  min-height: 44px;
+  place-items: center;
+  color: var(--muted);
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.mode-segment input:checked + span {
+  color: #fff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.mode-segment input:focus-visible + span {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(0, 94, 184, 0.16);
+}
+
+.mode-help {
+  margin-top: 8px;
+}
+
 .scheduler-preview-list {
   display: grid;
   gap: 10px;
@@ -682,6 +748,48 @@ select:focus {
 }
 
 .saved-schedule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.favourites-list {
+  display: grid;
+  gap: 14px;
+}
+
+.favourite-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.favourite-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.favourite-copy h3,
+.favourite-copy p {
+  margin: 0;
+}
+
+.favourite-type,
+.favourite-subtitle {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.favourite-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -739,6 +847,21 @@ select:focus {
     border-color 160ms ease,
     box-shadow 160ms ease,
     transform 160ms ease;
+}
+
+.stop-map-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.stop-map-button:focus-visible {
+  outline: 3px solid rgba(0, 94, 184, 0.18);
+  outline-offset: -3px;
 }
 
 .stop-card:hover {
@@ -844,6 +967,27 @@ select:focus {
 .destination span {
   display: block;
   overflow-wrap: anywhere;
+}
+
+.calling-points {
+  margin-top: 8px;
+}
+
+.calling-points summary {
+  width: fit-content;
+  color: var(--blue);
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.calling-points-list {
+  display: grid;
+  gap: 3px;
+  margin: 7px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 .destination span {
@@ -1052,7 +1196,19 @@ select:focus {
   }
 
   .saved-schedule-card,
-  .saved-schedule-actions {
+  .saved-schedule-actions,
+  .favourite-card,
+  .favourite-actions,
+  .heading-actions {
     flex-direction: column;
+  }
+
+  .heading-actions,
+  .favourite-actions {
+    width: 100%;
+  }
+
+  .mode-segments {
+    grid-template-columns: 1fr;
   }
 }

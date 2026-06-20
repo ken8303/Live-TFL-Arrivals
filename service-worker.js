@@ -1,9 +1,9 @@
-const STATIC_CACHE = "live-tfl-arrivals-static-v22";
+const STATIC_CACHE = "live-tfl-arrivals-static-v23";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/styles.css?v=2026-06-10-bottomnav2",
-  "/app.js?v=2026-06-20-hardening",
+  "/styles.css?v=2026-06-20-favourites-alerts",
+  "/app.js?v=2026-06-20-favourites-alerts",
   "/manifest.webmanifest?v=2026-06-08-pwa",
   "/icon.svg?v=2026-06-08-pwa",
   "/icon-maskable.svg?v=2026-06-08-pwa",
