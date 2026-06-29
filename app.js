@@ -804,6 +804,7 @@ async function loadSelectedTrainLine(station, lineId, preferredDestination = sta
   state.selectedTrainLine = lineId;
   state.selectedTrainDestination = preferredDestination || "";
   state.selectedTrainArrivals = [];
+  updateFavouriteButtons();
   updateBookmarkUrl();
   trainLineSelect.value = lineId;
   resetTrainDestinationSelect("Loading destinations...");
@@ -2484,16 +2485,25 @@ function buildFavourite(type) {
     };
   }
 
-  if (type === "train" && state.selectedTrainStation && state.selectedTrainLocation) {
+  if (type === "train" && state.selectedTrainStation && state.selectedTrainLine) {
+    const stationLocation = {
+      label: state.selectedTrainSearchQuery || state.selectedTrainStation.name,
+      lat: Number(state.selectedTrainStation.lat),
+      lon: Number(state.selectedTrainStation.lon),
+    };
+    const favouriteLocation =
+      state.selectedTrainLocation ||
+      (Number.isFinite(stationLocation.lat) && Number.isFinite(stationLocation.lon) ? stationLocation : null);
+    if (!favouriteLocation) return null;
     return {
-      id: `train:${state.selectedTrainStation.id}`,
+      id: `train:${state.selectedTrainStation.id}:${state.selectedTrainLine}:${state.selectedTrainDestination || "*"}`,
       type: "train",
       title: state.selectedTrainStation.name,
       subtitle: [
-        state.selectedTrainLine ? formatLineName(state.selectedTrainLine) : "Choose a line",
+        formatLineName(state.selectedTrainLine),
         state.selectedTrainDestination ? `to ${state.selectedTrainDestination}` : "All destinations",
       ].join(" · "),
-      location: { ...state.selectedTrainLocation },
+      location: { ...favouriteLocation },
       stopLocation: {
         lat: Number(state.selectedTrainStation.lat),
         lon: Number(state.selectedTrainStation.lon),

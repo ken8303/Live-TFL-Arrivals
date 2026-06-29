@@ -13,7 +13,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-06-29-favourite-schedules";
+const APP_VERSION = "2026-06-29-train-favourite";
 
 export default {
   async fetch(request, env) {
