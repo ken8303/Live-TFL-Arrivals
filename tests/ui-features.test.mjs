@@ -14,9 +14,11 @@ test("deployed app includes favourites, alert-only scheduling, and expandable ca
 
   assert.match(html, /id="favouritesNavButton"/);
   assert.match(html, /name="notificationMode" value="alerts"/);
-  assert.match(html, /app\.js\?v=2026-06-20-favourites-alerts/);
+  assert.match(html, /app\.js\?v=2026-06-29-favourite-schedules/);
   assert.match(app, /function renderFavourites\(\)/);
+  assert.match(app, /function loadFavouriteSchedules\(\)/);
   assert.match(app, /<details class="calling-points">/);
   assert.match(styles, /\.calling-points summary/);
-  assert.match(serviceWorker, /live-tfl-arrivals-static-v23/);
+  assert.match(styles, /\.favourite-arrival-list/);
+  assert.match(serviceWorker, /live-tfl-arrivals-static-v24/);
 });

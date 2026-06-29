@@ -18,6 +18,7 @@ const MIN_DELAY_MINUTES = 0;
 const MAX_DELAY_MINUTES = 60;
 const SCHEDULE_STORAGE_KEY = "live-tfl-arrivals-schedules";
 const FAVOURITES_STORAGE_KEY = "live-tfl-arrivals-favourites";
+const FAVOURITE_ARRIVAL_COUNT = 3;
 const PUSH_DEVICE_TOKEN_STORAGE_KEY = "live-tfl-arrivals-push-device-token";
 const SCHEDULE_CATCHUP_MS = 15 * 60 * 1000;
 const READING_BUS_PROVIDER = "reading-buses";
@@ -157,6 +158,7 @@ const state = {
   schedulerDraft: null,
   savedSchedules: [],
   favourites: [],
+  favouritesLoadToken: 0,
   schedulerTimer: null,
   schedulerTimeoutAt: null,
   serverPushConfigured: false,
@@ -1659,6 +1661,11 @@ function refreshActivePage() {
     return false;
   }
 
+  if (state.activePage === "favourites") {
+    renderFavourites();
+    return state.favourites.length > 0;
+  }
+
   if (state.lastLocation) {
     loadNearby(state.lastLocation);
     return true;
@@ -2466,6 +2473,10 @@ function buildFavourite(type) {
         state.selectedBusDestination ? `to ${state.selectedBusDestination}` : "All destinations",
       ].join(" · "),
       location: { ...state.selectedBusLocation },
+      stopLocation: {
+        lat: Number(state.selectedStop.lat),
+        lon: Number(state.selectedStop.lon),
+      },
       stopId: getStopId(state.selectedStop),
       route: state.selectedBusRoute || "",
       destination: state.selectedBusDestination || "",
@@ -2483,6 +2494,10 @@ function buildFavourite(type) {
         state.selectedTrainDestination ? `to ${state.selectedTrainDestination}` : "All destinations",
       ].join(" · "),
       location: { ...state.selectedTrainLocation },
+      stopLocation: {
+        lat: Number(state.selectedTrainStation.lat),
+        lon: Number(state.selectedTrainStation.lon),
+      },
       stationId: state.selectedTrainStation.id,
       crs: state.selectedTrainStation.crs || "",
       lineId: state.selectedTrainLine || "",
@@ -2545,10 +2560,128 @@ function renderFavourites() {
             <button class="primary-button inline-action" type="button" data-favourite-action="open" data-favourite-id="${escapeHtml(favourite.id)}">Open</button>
             <button class="secondary-button inline-action" type="button" data-favourite-action="remove" data-favourite-id="${escapeHtml(favourite.id)}">Remove</button>
           </div>
+          <div class="favourite-arrivals" data-favourite-schedule="${escapeHtml(favourite.id)}">
+            <div class="empty-state">Loading next ${FAVOURITE_ARRIVAL_COUNT} ${favourite.type === "bus" ? "buses" : "trains"}...</div>
+          </div>
         </article>
       `,
     )
     .join("");
+
+  if (state.activePage === "favourites") {
+    loadFavouriteSchedules();
+  }
+}
+
+async function loadFavouriteSchedules() {
+  const token = (state.favouritesLoadToken += 1);
+  await Promise.all(
+    state.favourites.map(async (favourite) => {
+      const target = getFavouriteScheduleElement(favourite.id);
+      if (!target) return;
+
+      try {
+        const { arrivals, boardStation } = await getFavouriteArrivals(favourite);
+        if (token !== state.favouritesLoadToken) return;
+        target.innerHTML = renderFavouriteArrivalList(favourite, arrivals, boardStation);
+      } catch (error) {
+        console.error(error);
+        if (token !== state.favouritesLoadToken) return;
+        target.innerHTML = `<div class="empty-state">Live schedule could not be loaded for this favourite.</div>`;
+      }
+    }),
+  );
+
+  if (token === state.favouritesLoadToken && state.activePage === "favourites") {
+    lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  }
+}
+
+function getFavouriteScheduleElement(favouriteId) {
+  return [...favouritesList.querySelectorAll("[data-favourite-schedule]")]
+    .find((element) => element.dataset.favouriteSchedule === favouriteId) || null;
+}
+
+async function getFavouriteArrivals(favourite) {
+  if (favourite.type === "bus") {
+    const arrivals = filterBusArrivals(
+      await getBusArrivals(buildFavouriteStop(favourite), SELECTED_STOP_FILTER_CANDIDATES),
+      favourite.route || "",
+      favourite.destination || "",
+    ).slice(0, FAVOURITE_ARRIVAL_COUNT);
+    return { arrivals, boardStation: null };
+  }
+
+  const station = buildFavouriteStation(favourite);
+  const lineId = favourite.lineId || "national-rail";
+  const allArrivals = await getTrainArrivalsForLine(station, lineId);
+  const usesDepartureBoard = lineId === "national-rail" && station.crs || shouldUseNationalRailDeparturesForLine(station, lineId);
+  const arrivals = (usesDepartureBoard ? allArrivals.filter((arrival) => isAfterDelay(arrival.timeToStation)) : filterArrivalsByLine(allArrivals, lineId))
+    .filter((arrival) => !favourite.destination || cleanStationName(arrival.destinationName || "") === favourite.destination)
+    .slice(0, FAVOURITE_ARRIVAL_COUNT);
+
+  return { arrivals, boardStation: station };
+}
+
+function buildFavouriteStop(favourite) {
+  return {
+    id: favourite.stopId,
+    naptanId: favourite.stopId,
+    commonName: favourite.title,
+    lat: Number(favourite.stopLocation?.lat),
+    lon: Number(favourite.stopLocation?.lon),
+    provider: favourite.provider || "tfl",
+  };
+}
+
+function buildFavouriteStation(favourite) {
+  const crs = favourite.crs || getPreferredNationalRailCrs(favourite.stationId);
+  const knownStation = crs ? getKnownNationalRailFallbackStationByCrs(crs) : null;
+  return {
+    id: favourite.stationId || knownStation?.id || (crs ? `NR:${crs}` : ""),
+    naptanId: favourite.stationId || knownStation?.id || (crs ? `NR:${crs}` : ""),
+    name: favourite.title || knownStation?.name || "Train station",
+    commonName: favourite.title || knownStation?.name || "Train station",
+    crs,
+    lat: Number.isFinite(Number(favourite.stopLocation?.lat)) ? Number(favourite.stopLocation.lat) : knownStation?.lat,
+    lon: Number.isFinite(Number(favourite.stopLocation?.lon)) ? Number(favourite.stopLocation.lon) : knownStation?.lon,
+    provider: String(favourite.stationId || "").startsWith("NR:") ? "national-rail" : "",
+    lines: [{ id: favourite.lineId || "national-rail", name: formatLineName(favourite.lineId || "national-rail") }],
+  };
+}
+
+function renderFavouriteArrivalList(favourite, arrivals, boardStation) {
+  const isTrain = favourite.type === "train";
+  const emptyLabel = isTrain ? "train departures" : "buses";
+  if (!arrivals.length) {
+    return `<div class="empty-state">No live ${emptyLabel} for this favourite right now.</div>`;
+  }
+
+  return `
+    <ul class="arrival-list favourite-arrival-list">
+      ${arrivals
+        .map(
+          (arrival) => `
+            <li class="arrival ${arrival.modeName === "national-rail" ? "national-rail-arrival" : ""}">
+              <span class="route">${escapeHtml(arrival.lineName || arrival.lineId || (isTrain ? "Train" : "Bus"))}</span>
+              <span class="destination">
+                <strong>${escapeHtml(formatDestinationText(arrival, boardStation))}</strong>
+                <span>${escapeHtml(formatJourneyDetail(arrival, boardStation))}</span>
+                ${formatCallingPoints(arrival)}
+              </span>
+              <span class="eta-block">
+                <span class="eta">${formatEta(arrival.timeToStation, arrival.serviceStatus)}</span>
+                ${formatPlatformDisplay(arrival)}
+              </span>
+            </li>
+          `,
+        )
+        .join("")}
+    </ul>
+  `;
 }
 
 async function handleFavouritesClick(event) {
@@ -3389,6 +3522,7 @@ function updateRefreshCountdown() {
 function hasRefreshTarget() {
   if (state.activePage === "select") return Boolean(state.selectedStop);
   if (state.activePage === "train") return Boolean(state.selectedTrainStation && state.selectedTrainLine);
+  if (state.activePage === "favourites") return state.favourites.length > 0;
   return Boolean(state.lastLocation);
 }
 

@@ -759,9 +759,8 @@ select:focus {
 }
 
 .favourite-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   padding: 18px;
   background: var(--panel);
@@ -793,6 +792,20 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  justify-content: flex-end;
+}
+
+.favourite-arrivals {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.favourite-arrival-list {
+  margin-top: 2px;
+}
+
+.favourite-arrival-list .arrival {
+  grid-template-columns: minmax(54px, 0.45fr) minmax(0, 1.6fr) auto;
 }
 
 .line-status {
@@ -1197,15 +1210,25 @@ select:focus {
 
   .saved-schedule-card,
   .saved-schedule-actions,
-  .favourite-card,
   .favourite-actions,
   .heading-actions {
     flex-direction: column;
   }
 
+  .favourite-card {
+    grid-template-columns: 1fr;
+  }
+
   .heading-actions,
   .favourite-actions {
     width: 100%;
+  }
+
+  .favourite-arrival-list .arrival {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "route eta"
+      "destination destination";
   }
 
   .mode-segments {
