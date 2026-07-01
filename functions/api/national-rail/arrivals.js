@@ -218,6 +218,7 @@ function getLondonDateParts(date) {
 
 function getLondonOccurrenceIso(dateParts, timeText) {
   const [hours, minutes] = timeText.split(":").map(Number);
+  // London currently switches between GMT and BST, so these probes cover both possible UTC offsets.
   for (const offsetMinutes of [0, 60]) {
     const candidateUtc = Date.UTC(
       dateParts.year,

@@ -10,11 +10,15 @@ import {
 const API_BASE = "https://api.tfl.gov.uk";
 const SCHEDULE_PREFIX = "schedule:";
 const ENDPOINT_META_PREFIX = "endpoint-meta:";
+const RATE_LIMIT_PREFIX = "rate-limit:";
 const DEFAULT_TTL_SECONDS = 60 * 60;
 const MAX_PUSH_LINES = 3;
 const MAX_SCHEDULES_PER_SUBSCRIPTION = 20;
 const MAX_SCHEDULE_PAGE_COUNT = 1000;
 const MAX_SCHEDULE_BATCH_SIZE = 10;
+const RATE_LIMIT_WINDOW_SECONDS = 60;
+const WRITE_RATE_LIMIT_MAX = 30;
+const TEST_PUSH_RATE_LIMIT_MAX = 10;
 const ALLOWED_PUSH_HOSTS = new Set([
   "updates.push.services.mozilla.com",
   "fcm.googleapis.com",
@@ -36,6 +40,8 @@ export async function savePushSchedule({ request, env }) {
 
   const guard = validateWriteRequest(request);
   if (guard) return guard;
+  const rateLimit = await enforceWriteRateLimit(request, env, "save-schedule", WRITE_RATE_LIMIT_MAX);
+  if (rateLimit) return rateLimit;
 
   const payload = await request.json();
   const subscription = normaliseSubscription(payload.subscription);
@@ -93,6 +99,8 @@ export async function deletePushSchedule({ request, env }) {
 
   const guard = validateWriteRequest(request);
   if (guard) return guard;
+  const rateLimit = await enforceWriteRateLimit(request, env, "delete-schedule", WRITE_RATE_LIMIT_MAX);
+  if (rateLimit) return rateLimit;
 
   const payload = await request.json();
   const endpoint = String(payload.endpoint || "");
@@ -119,14 +127,23 @@ export async function deletePushSchedule({ request, env }) {
 }
 
 export async function sendPushTest({ request, env }) {
+  if (!env.PUSH_SCHEDULES) {
+    return json({ error: "Server push storage is not configured." }, 501);
+  }
+
   const guard = validateWriteRequest(request);
   if (guard) return guard;
+  const rateLimit = await enforceWriteRateLimit(request, env, "test-push", TEST_PUSH_RATE_LIMIT_MAX);
+  if (rateLimit) return rateLimit;
 
   const payload = await request.json();
   const subscription = normaliseSubscription(payload.subscription);
   const clientToken = normaliseClientToken(payload.clientToken);
   if (!subscription || !clientToken) {
     return json({ error: "A valid push subscription and device token are required." }, 400);
+  }
+  if (!(await hasSavedPushEndpoint(env, subscription, clientToken))) {
+    return json({ error: "Save a server push schedule on this device before sending a test push." }, 403);
   }
 
   const result = await sendWebPush(
@@ -212,7 +229,7 @@ function validateWriteRequest(request) {
   return null;
 }
 
-function isSameOriginPost(request) {
+export function isSameOriginPost(request) {
   const origin = request.headers.get("Origin");
   const host = request.headers.get("Host");
   if (!origin || !host) return false;
@@ -222,6 +239,38 @@ function isSameOriginPost(request) {
   } catch {
     return false;
   }
+}
+
+async function enforceWriteRateLimit(request, env, action, limit) {
+  if (!env.PUSH_SCHEDULES) return null;
+  const clientKey = await sha256(`${getClientAddress(request)}:${action}`);
+  const windowId = Math.floor(Date.now() / (RATE_LIMIT_WINDOW_SECONDS * 1000));
+  const key = `${RATE_LIMIT_PREFIX}${action}:${windowId}:${clientKey}`;
+  const current = Number.parseInt(await env.PUSH_SCHEDULES.get(key), 10) || 0;
+  if (current >= limit) {
+    return json({ error: "Too many push requests. Please wait a minute and try again." }, 429);
+  }
+  await env.PUSH_SCHEDULES.put(key, String(current + 1), { expirationTtl: RATE_LIMIT_WINDOW_SECONDS * 2 });
+  return null;
+}
+
+function getClientAddress(request) {
+  const forwardedFor = request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("True-Client-IP") ||
+    request.headers.get("X-Forwarded-For") ||
+    "";
+  return forwardedFor.split(",")[0].trim() || "unknown-client";
+}
+
+export async function hasSavedPushEndpoint(env, subscription, clientToken) {
+  const endpointHash = await sha256(subscription.endpoint);
+  const meta = await getEndpointMeta(env, endpointHash);
+  const keys = Object.values(meta.schedules || {});
+  if (!keys.length) return false;
+
+  const clientTokenHash = await sha256(clientToken);
+  const storedSchedules = await Promise.all(keys.slice(0, MAX_SCHEDULES_PER_SUBSCRIPTION).map((key) => env.PUSH_SCHEDULES.get(key, "json")));
+  return storedSchedules.some((stored) => stored?.clientTokenHash === clientTokenHash);
 }
 
 async function getScheduleNotification(schedule, env, previousAlertState = {}) {
