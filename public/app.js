@@ -669,15 +669,10 @@ async function loadNearbyTrainStationsForSelection(
       return;
     }
     const preferredIndex = preferredStationId ? stations.findIndex((station) => matchesPreferredTrainStation(station, preferredStationId)) : -1;
-    if (preferredIndex >= 0) {
-      trainStationSelect.value = String(preferredIndex);
-      shouldScheduleRefresh = false;
-      state.loading = false;
-      await loadSelectedTrainStation(preferredLine, preferredDestination);
-    } else {
-      selectedTrainPanel.innerHTML = `<div class="empty-state">Found ${stations.length} train stations within 1 km. Choose one to see live arrivals.</div>`;
-      setStatus(`Found ${stations.length} train stations within 1 km of ${location.label || "this location"}.`, "ready");
-    }
+    trainStationSelect.value = String(preferredIndex >= 0 ? preferredIndex : 0);
+    shouldScheduleRefresh = false;
+    state.loading = false;
+    await loadSelectedTrainStation(preferredLine, preferredDestination);
     updateBookmarkUrl();
     lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString([], {
       hour: "2-digit",
