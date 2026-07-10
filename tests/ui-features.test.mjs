@@ -14,14 +14,16 @@ test("deployed app includes favourites, alert-only scheduling, and expandable ca
 
   assert.match(html, /id="favouritesNavButton"/);
   assert.match(html, /name="notificationMode" value="alerts"/);
-  assert.match(html, /app\.js\?v=2026-07-10-remove-station-selectors/);
+  assert.match(html, /app\.js\?v=2026-07-10-hide-map-selectors/);
   assert.doesNotMatch(html, /Bus stops within 1 km/);
   assert.doesNotMatch(html, /Train stations within 1 km/);
+  assert.match(html, /id="busMapLegend" hidden aria-hidden="true"/);
+  assert.match(html, /id="trainMapLegend" hidden aria-hidden="true"/);
   assert.match(app, /function renderFavourites\(\)/);
   assert.match(app, /function loadFavouriteSchedules\(\)/);
   assert.match(app, /train:\$\{state\.selectedTrainStation\.id\}:\$\{state\.selectedTrainLine\}/);
   assert.match(app, /<details class="calling-points">/);
   assert.match(styles, /\.calling-points summary/);
   assert.match(styles, /\.favourite-arrival-list/);
-  assert.match(serviceWorker, /live-tfl-arrivals-static-v26/);
+  assert.match(serviceWorker, /live-tfl-arrivals-static-v27/);
 });

@@ -12,7 +12,7 @@
     <link rel="manifest" href="manifest.webmanifest?v=2026-06-08-pwa" />
     <link rel="icon" href="icon.svg?v=2026-06-08-pwa" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg?v=2026-06-08-pwa" />
-    <link rel="stylesheet" href="styles.css?v=2026-07-10-remove-station-selectors" />
+    <link rel="stylesheet" href="styles.css?v=2026-07-10-hide-map-selectors" />
   </head>
   <body>
     <main class="app-shell">
@@ -223,7 +223,7 @@
             loading="lazy"
             referrerpolicy="no-referrer-when-downgrade"
           ></iframe>
-          <div class="map-legend" id="busMapLegend"></div>
+          <div class="map-legend" id="busMapLegend" hidden aria-hidden="true"></div>
         </section>
 
         <section class="result-section" aria-label="Selected bus stop arrivals">
@@ -298,7 +298,7 @@
             loading="lazy"
             referrerpolicy="no-referrer-when-downgrade"
           ></iframe>
-          <div class="map-legend" id="trainMapLegend"></div>
+          <div class="map-legend" id="trainMapLegend" hidden aria-hidden="true"></div>
         </section>
 
         <section class="result-section" aria-label="Selected train station arrivals">
@@ -446,6 +446,6 @@
       </article>
     </template>
 
-    <script src="app.js?v=2026-07-10-remove-station-selectors"></script>
+    <script src="app.js?v=2026-07-10-hide-map-selectors"></script>
   </body>
 </html>
