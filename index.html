@@ -12,7 +12,7 @@
     <link rel="manifest" href="manifest.webmanifest?v=2026-06-08-pwa" />
     <link rel="icon" href="icon.svg?v=2026-06-08-pwa" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icon.svg?v=2026-06-08-pwa" />
-    <link rel="stylesheet" href="styles.css?v=2026-07-10-hidden-fix" />
+    <link rel="stylesheet" href="styles.css?v=2026-07-10-restore-main-selectors" />
   </head>
   <body>
     <main class="app-shell">
@@ -183,9 +183,12 @@
             </label>
             <button class="secondary-button" type="submit">Search</button>
           </form>
-          <select id="selectedStopSelect" hidden disabled aria-hidden="true">
-            <option>Search a location first</option>
-          </select>
+          <label>
+            Bus stops within 1 km
+            <select id="selectedStopSelect" disabled>
+              <option>Search a location first</option>
+            </select>
+          </label>
           <label>
             Route
             <select id="busRouteSelect" disabled>
@@ -260,7 +263,10 @@
             </label>
             <button class="secondary-button" type="submit">Search</button>
           </form>
-          <select id="trainStationSelect" hidden aria-hidden="true"></select>
+          <label>
+            Train stations within 1 km
+            <select id="trainStationSelect"></select>
+          </label>
           <label>
             Train line
             <select id="trainLineSelect" disabled>
@@ -446,6 +452,6 @@
       </article>
     </template>
 
-    <script src="app.js?v=2026-07-10-hidden-fix"></script>
+    <script src="app.js?v=2026-07-10-restore-main-selectors"></script>
   </body>
 </html>
