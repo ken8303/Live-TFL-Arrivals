@@ -13,7 +13,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-07-10-hide-map-selectors";
+const APP_VERSION = "2026-07-10-hidden-fix";
 
 export default {
   async fetch(request, env) {

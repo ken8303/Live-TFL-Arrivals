@@ -14,7 +14,7 @@ test("deployed app includes favourites, alert-only scheduling, and expandable ca
 
   assert.match(html, /id="favouritesNavButton"/);
   assert.match(html, /name="notificationMode" value="alerts"/);
-  assert.match(html, /app\.js\?v=2026-07-10-hide-map-selectors/);
+  assert.match(html, /app\.js\?v=2026-07-10-hidden-fix/);
   assert.doesNotMatch(html, /Bus stops within 1 km/);
   assert.doesNotMatch(html, /Train stations within 1 km/);
   assert.match(html, /id="busMapLegend" hidden aria-hidden="true"/);
@@ -24,6 +24,7 @@ test("deployed app includes favourites, alert-only scheduling, and expandable ca
   assert.match(app, /train:\$\{state\.selectedTrainStation\.id\}:\$\{state\.selectedTrainLine\}/);
   assert.match(app, /<details class="calling-points">/);
   assert.match(styles, /\.calling-points summary/);
+  assert.match(styles, /\[hidden\]\s*{\s*display: none !important;/);
   assert.match(styles, /\.favourite-arrival-list/);
-  assert.match(serviceWorker, /live-tfl-arrivals-static-v27/);
+  assert.match(serviceWorker, /live-tfl-arrivals-static-v28/);
 });
