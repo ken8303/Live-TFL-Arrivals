@@ -818,12 +818,11 @@ async function loadSelectedTrainLine(station, lineId, preferredDestination = sta
 
   try {
     const [allArrivals, lineStatus] = await Promise.all([getTrainArrivalsForLine(station, lineId), getLineStatus(lineId)]);
-    const limit = getTrainResultLimit(lineId, station);
     const usesDepartureBoard = lineId === "national-rail" && station.crs || shouldUseNationalRailDeparturesForLine(station, lineId);
     const arrivals =
       usesDepartureBoard
-        ? allArrivals.filter((arrival) => isAfterDelay(arrival.timeToStation)).slice(0, limit)
-        : filterArrivalsByLine(allArrivals, lineId).slice(0, limit);
+        ? allArrivals.filter((arrival) => isAfterDelay(arrival.timeToStation))
+        : filterArrivalsByLine(allArrivals, lineId);
     state.selectedTrainArrivals = arrivals;
     syncTrainDestinationSelect();
     renderLineStatus(lineStatus, lineId);
@@ -899,11 +898,13 @@ function resetTrainDestinationSelect(label = "Choose a line first") {
 
 function syncTrainDestinationSelect() {
   const destinations = getDestinationOptions(state.selectedTrainArrivals);
+  if (state.selectedTrainDestination && !destinations.includes(state.selectedTrainDestination)) {
+    destinations.push(state.selectedTrainDestination);
+  }
   trainDestinationSelect.innerHTML = [`<option value="">All destinations</option>`]
     .concat(destinations.map((destination) => `<option value="${escapeHtml(destination)}">${escapeHtml(destination)}</option>`))
     .join("");
   trainDestinationSelect.disabled = destinations.length === 0;
-  if (!destinations.includes(state.selectedTrainDestination)) state.selectedTrainDestination = "";
   trainDestinationSelect.value = state.selectedTrainDestination;
 }
 
@@ -911,7 +912,8 @@ function renderSelectedTrainWithFilters(lineStatus = null) {
   if (!state.selectedTrainStation || !state.selectedTrainLine) return;
   const station = state.selectedTrainStation;
   const lineId = state.selectedTrainLine;
-  const filteredArrivals = filterArrivalsByDestination(state.selectedTrainArrivals, state.selectedTrainDestination);
+  const filteredArrivals = filterArrivalsByDestination(state.selectedTrainArrivals, state.selectedTrainDestination)
+    .slice(0, getTrainResultLimit(lineId, station));
   renderSelectedTrainStation(station, filteredArrivals, lineId);
   setTrainStationStatus(station, lineId, filteredArrivals.length, lineStatus);
   updateScheduleButtons();
@@ -2903,10 +2905,10 @@ async function saveCurrentSchedule() {
   state.schedulerDraft = schedule;
   persistSavedSchedules();
   scheduleSavedNotifications();
-  await syncScheduleToServer(schedule);
+  const synced = await syncScheduleToServer(schedule);
   refreshSchedulerUi();
   updateBookmarkUrl();
-  setStatus(`Saved scheduler reminder for ${schedule.title}.`, "ready");
+  if (synced !== false) setStatus(`Saved scheduler reminder for ${schedule.title}.`, "ready");
 }
 
 function handleSavedSchedulesClick(event) {
@@ -3123,9 +3125,11 @@ async function syncScheduleToServer(schedule) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || `Server push sync failed with status ${response.status}.`);
     }
+    return true;
   } catch (error) {
     console.warn("Could not sync schedule to server push", error);
     setStatus("Schedule saved on this device. Server push could not be synced yet.", "waiting");
+    return false;
   }
 }
 

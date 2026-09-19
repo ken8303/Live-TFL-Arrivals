@@ -9,7 +9,7 @@ import {
 
 const API_BASE = "https://api.tfl.gov.uk";
 const SCHEDULE_PREFIX = "schedule:";
-const ENDPOINT_META_PREFIX = "endpoint-meta:";
+const SCHEDULE_INDEX_PREFIX = "schedule-index:";
 const RATE_LIMIT_PREFIX = "rate-limit:";
 const DEFAULT_TTL_SECONDS = 60 * 60;
 const MAX_PUSH_LINES = 3;
@@ -56,11 +56,14 @@ export async function savePushSchedule({ request, env }) {
   const endpointHash = await sha256(subscription.endpoint);
   const meta = await getEndpointMeta(env, endpointHash);
   const key = getScheduleKey(endpointHash, schedule, timeZone);
-  const existingKey = meta.schedules[schedule.id] || getLegacyScheduleKey(endpointHash, schedule.id);
+  const indexKey = getScheduleIndexKey(endpointHash, schedule.id);
+  const index = await env.PUSH_SCHEDULES.get(indexKey, "json");
+  const existingKey = index?.key || meta.schedules[schedule.id] || getLegacyScheduleKey(endpointHash, schedule.id);
   const existing = existingKey ? await env.PUSH_SCHEDULES.get(existingKey, "json") : null;
   const clientTokenHash = await sha256(clientToken);
 
-  if (existing?.clientTokenHash && existing.clientTokenHash !== clientTokenHash) {
+  if ((index?.clientTokenHash && index.clientTokenHash !== clientTokenHash) ||
+      (existing?.clientTokenHash && existing.clientTokenHash !== clientTokenHash)) {
     return json({ error: "This schedule belongs to another device." }, 403);
   }
 
@@ -81,13 +84,10 @@ export async function savePushSchedule({ request, env }) {
       updatedAt: new Date().toISOString(),
     }),
   );
+  await env.PUSH_SCHEDULES.put(indexKey, JSON.stringify({ key, clientTokenHash }));
   if (existingKey && existingKey !== key) {
     await env.PUSH_SCHEDULES.delete(existingKey);
   }
-  meta.schedules[schedule.id] = key;
-  meta.count = Object.keys(meta.schedules).length;
-  meta.updatedAt = new Date().toISOString();
-  await putEndpointMeta(env, endpointHash, meta);
 
   return json({ ok: true, scheduleId: schedule.id });
 }
@@ -111,18 +111,23 @@ export async function deletePushSchedule({ request, env }) {
   }
 
   const endpointHash = await sha256(endpoint);
-  const meta = await getEndpointMeta(env, endpointHash);
   const normalisedScheduleId = normaliseScheduleId(scheduleId);
-  const key = meta.schedules[normalisedScheduleId] || getLegacyScheduleKey(endpointHash, normalisedScheduleId);
-  const existing = await env.PUSH_SCHEDULES.get(key, "json");
-  if (existing?.clientTokenHash && existing.clientTokenHash !== await sha256(clientToken)) {
+  if (!normalisedScheduleId) return json({ error: "A valid schedule ID is required." }, 400);
+  const indexKey = getScheduleIndexKey(endpointHash, normalisedScheduleId);
+  const index = await env.PUSH_SCHEDULES.get(indexKey, "json");
+  const clientTokenHash = await sha256(clientToken);
+  // Scan all old time-based keys, including records lost by the former shared index.
+  const keys = new Set(await listScheduleKeys(env, `${SCHEDULE_PREFIX}${endpointHash}:${normalisedScheduleId}:`));
+  keys.add(getLegacyScheduleKey(endpointHash, normalisedScheduleId));
+  if (index?.key) keys.add(index.key);
+  const records = await Promise.all([...keys].map((key) => env.PUSH_SCHEDULES.get(key, "json")));
+  if ((index?.clientTokenHash && index.clientTokenHash !== clientTokenHash) ||
+      records.some((stored) => stored?.clientTokenHash && stored.clientTokenHash !== clientTokenHash)) {
     return json({ error: "This schedule belongs to another device." }, 403);
   }
-  await env.PUSH_SCHEDULES.delete(key);
-  delete meta.schedules[normalisedScheduleId];
-  meta.count = Object.keys(meta.schedules).length;
-  meta.updatedAt = new Date().toISOString();
-  await putEndpointMeta(env, endpointHash, meta);
+  // Keep a tombstone to suppress old records once the deletion propagates through KV.
+  await env.PUSH_SCHEDULES.put(indexKey, JSON.stringify({ key: null, clientTokenHash }));
+  await Promise.all([...keys].map((key) => env.PUSH_SCHEDULES.delete(key)));
   return json({ ok: true });
 }
 
@@ -165,17 +170,13 @@ export async function runScheduledPush(_controller, env) {
   let cursor;
   do {
     const page = await env.PUSH_SCHEDULES.list({ prefix: SCHEDULE_PREFIX, cursor, limit: MAX_SCHEDULE_PAGE_COUNT });
-    cursor = page.cursor;
+    cursor = page.list_complete ? undefined : page.cursor;
     const dueKeys = page.keys
       .map((item) => ({ name: item.name, dueKey: getDueMinuteKeyFromScheduleKey(item.name) }))
       .filter((item) => item.dueKey);
     for (let index = 0; index < dueKeys.length; index += MAX_SCHEDULE_BATCH_SIZE) {
       const batch = dueKeys.slice(index, index + MAX_SCHEDULE_BATCH_SIZE);
-      const results = await Promise.all(batch.map((item) => processStoredSchedule(item.name, env, item.dueKey)));
-      await cleanupExpiredScheduleMetadata(
-        results.filter((result) => result?.gone).map((result) => result.key),
-        env,
-      );
+      await Promise.all(batch.map((item) => processStoredSchedule(item.name, env, item.dueKey)));
     }
   } while (cursor);
 }
@@ -183,6 +184,7 @@ export async function runScheduledPush(_controller, env) {
 async function processStoredSchedule(key, env, dueKey) {
   const stored = await env.PUSH_SCHEDULES.get(key, "json");
   if (!stored?.subscription || !stored?.schedule) return null;
+  if (!(await isCurrentScheduleKey(env, key))) return null;
 
   if (!dueKey || stored.lastFiredKey === dueKey) return null;
 
@@ -194,6 +196,7 @@ async function processStoredSchedule(key, env, dueKey) {
     await env.PUSH_SCHEDULES.put(key, JSON.stringify(stored));
     return { gone: false, key };
   }
+  if (!(await isCurrentScheduleKey(env, key))) return null;
   const result = await sendWebPush(
     stored.subscription,
     {
@@ -628,54 +631,42 @@ function isBase64UrlToken(value, minLength, maxLength) {
   return value.length >= minLength && value.length <= maxLength && /^[a-zA-Z0-9_-]+$/.test(value);
 }
 
+async function listScheduleKeys(env, prefix) {
+  const keys = [];
+  let cursor;
+  do {
+    const page = await env.PUSH_SCHEDULES.list({ prefix, cursor, limit: MAX_SCHEDULE_PAGE_COUNT });
+    keys.push(...page.keys.map((item) => item.name));
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return keys;
+}
+
+async function isCurrentScheduleKey(env, key) {
+  const parsed = parseScheduleKey(key);
+  if (!parsed) return true;
+  const index = await env.PUSH_SCHEDULES.get(getScheduleIndexKey(parsed.endpointHash, parsed.scheduleId), "json");
+  return !index || index.key === key;
+}
+
 async function getEndpointMeta(env, endpointHash) {
-  const meta = await env.PUSH_SCHEDULES.get(getEndpointMetaKey(endpointHash), "json");
-  const schedules = meta?.schedules && typeof meta.schedules === "object" ? meta.schedules : {};
-  return {
-    count: Number.isFinite(meta?.count) ? meta.count : Object.keys(schedules).length,
-    schedules,
-    updatedAt: meta?.updatedAt || "",
-  };
+  // Derive the inventory from independent records; never overwrite a shared map.
+  const keys = await listScheduleKeys(env, `${SCHEDULE_PREFIX}${endpointHash}:`);
+  const schedules = {};
+  for (const key of keys) {
+    if (!(await isCurrentScheduleKey(env, key))) continue;
+    const id = parseScheduleKey(key)?.scheduleId || key.split(":")[2];
+    if (id) schedules[id] = key;
+  }
+  return { schedules, count: Object.keys(schedules).length };
 }
 
-async function putEndpointMeta(env, endpointHash, meta) {
-  await env.PUSH_SCHEDULES.put(
-    getEndpointMetaKey(endpointHash),
-    JSON.stringify({
-      count: Object.keys(meta.schedules || {}).length,
-      schedules: meta.schedules || {},
-      updatedAt: meta.updatedAt || new Date().toISOString(),
-    }),
-  );
-}
-
-function getEndpointMetaKey(endpointHash) {
-  return `${ENDPOINT_META_PREFIX}${endpointHash}`;
+function getScheduleIndexKey(endpointHash, scheduleId) {
+  return `${SCHEDULE_INDEX_PREFIX}${endpointHash}:${normaliseScheduleId(scheduleId)}`;
 }
 
 function getLegacyScheduleKey(endpointHash, scheduleId) {
   return `${SCHEDULE_PREFIX}${endpointHash}:${normaliseScheduleId(scheduleId)}`;
-}
-
-async function cleanupExpiredScheduleMetadata(keys, env) {
-  const byEndpoint = new Map();
-  keys.forEach((key) => {
-    const parsed = parseScheduleKey(key);
-    if (!parsed) return;
-    const schedules = byEndpoint.get(parsed.endpointHash) || [];
-    schedules.push({ id: parsed.scheduleId, key });
-    byEndpoint.set(parsed.endpointHash, schedules);
-  });
-
-  for (const [endpointHash, schedules] of byEndpoint) {
-    const meta = await getEndpointMeta(env, endpointHash);
-    schedules.forEach(({ id, key }) => {
-      if (meta.schedules[id] === key) delete meta.schedules[id];
-    });
-    meta.count = Object.keys(meta.schedules).length;
-    meta.updatedAt = new Date().toISOString();
-    await putEndpointMeta(env, endpointHash, meta);
-  }
 }
 
 function cleanName(value) {

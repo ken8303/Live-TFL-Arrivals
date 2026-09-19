@@ -27,7 +27,7 @@ const MIME_TYPES = {
 let catalogApi = null;
 let nationalRailApi = null;
 
-loadEnv();
+if (require.main === module) loadEnv();
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -51,6 +51,15 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === "/api/reading-buses/predictions" || url.pathname === "/api/reading-buses/lines") {
+      const modulePath = url.pathname.endsWith("/predictions")
+        ? "./functions/api/reading-buses/predictions.js"
+        : "./functions/api/reading-buses/lines.js";
+      const { onRequestGet } = await import(modulePath);
+      await sendApiResponse(await onRequestGet({ request: new Request(url.href), env: process.env }), response);
+      return;
+    }
+
     if (url.pathname === "/api/catalog/bus-stops") {
       const { getCachedBusStops } = await getCatalogApi();
       sendJson(response, 200, await getCachedBusStops(process.env));
@@ -70,9 +79,13 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`Live arrivals server running at http://${HOST}:${PORT}/`);
-});
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    console.log(`Live arrivals server running at http://${HOST}:${PORT}/`);
+  });
+}
+
+module.exports = server;
 
 async function handleTflProxy(url, response) {
   const upstreamUrl = buildTflProxyUrl(url);
@@ -179,6 +192,10 @@ async function handleNationalRailArrivals(url, response) {
     request: new Request(url.href),
     env: process.env,
   });
+  await sendApiResponse(workerResponse, response);
+}
+
+async function sendApiResponse(workerResponse, response) {
   response.writeHead(workerResponse.status, {
     "Content-Type": workerResponse.headers.get("content-type") || "application/json; charset=utf-8",
     "Cache-Control": workerResponse.headers.get("cache-control") || "no-store",

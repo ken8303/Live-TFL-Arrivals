@@ -5,7 +5,7 @@ Static frontend with a small local server for protected National Rail requests.
 ## Run Locally
 
 1. Copy `.env.example` to `.env`.
-2. Add your National Rail token or username/password to `.env`.
+2. Add `READING_OPEN_DATA_API_TOKEN` for Reading Buses, `TFL_APP_KEY` for TfL, and `NATIONAL_RAIL_DARWIN_TOKEN` for National Rail to `.env`, as needed.
 3. Start the server:
 
 ```sh
@@ -120,3 +120,14 @@ node scripts/generate-vapid-keys.mjs
 The Worker runs the scheduler every 5 minutes using the cron trigger in `wrangler.jsonc`.
 
 Then redeploy the Pages project from the latest GitHub commit.
+
+
+### Reminder storage compatibility
+
+Each reminder now has an independent `schedule-index:` record. Older time-based
+`schedule:` records remain supported; editing or deleting a reminder also handles
+records omitted by the former shared endpoint index. No new Cloudflare binding is
+required. Deletion markers suppress obsolete records after KV changes propagate.
+KV is eventually consistent, so an update or deletion may not be visible to a
+scheduler running elsewhere immediately. The existing KV-based quota is also a
+best-effort limit, not an atomic reservation across concurrent requests.
