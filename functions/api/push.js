@@ -176,7 +176,13 @@ export async function runScheduledPush(_controller, env) {
       .filter((item) => item.dueKey);
     for (let index = 0; index < dueKeys.length; index += MAX_SCHEDULE_BATCH_SIZE) {
       const batch = dueKeys.slice(index, index + MAX_SCHEDULE_BATCH_SIZE);
-      await Promise.all(batch.map((item) => processStoredSchedule(item.name, env, item.dueKey)));
+      const results = await Promise.allSettled(batch.map((item) => processStoredSchedule(item.name, env, item.dueKey)));
+      for (const result of results) {
+        if (result.status === "rejected") {
+          // Leave failed records unmarked so the next cron can retry within the catch-up window.
+          console.error("Scheduled reminder processing failed", result.reason?.message || "Unknown error");
+        }
+      }
     }
   } while (cursor);
 }
@@ -279,7 +285,7 @@ export async function hasSavedPushEndpoint(env, subscription, clientToken) {
 async function getScheduleNotification(schedule, env, previousAlertState = {}) {
   try {
     if (schedule.alertOnly) {
-      return getScheduleAlerts(schedule, env, previousAlertState);
+      return await getScheduleAlerts(schedule, env, previousAlertState);
     }
     const lines = schedule.type === "bus" ? await getBusLines(schedule, env) : await getTrainLines(schedule, env);
     return {
@@ -289,8 +295,9 @@ async function getScheduleNotification(schedule, env, previousAlertState = {}) {
       alertState: previousAlertState,
     };
   } catch (error) {
+    if (schedule.alertOnly) throw error;
     return {
-      body: schedule.alertOnly ? "" : error.message || "Live transport times could not be loaded.",
+      body: error.message || "Live transport times could not be loaded.",
       alertState: previousAlertState,
     };
   }

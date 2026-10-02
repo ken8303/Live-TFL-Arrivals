@@ -188,3 +188,38 @@ test("another device cannot delete a saved reminder", async () => {
   assert.equal(response.status, 403);
   assert.equal([...kv.store.keys()].filter((key) => key.startsWith("schedule:")).length, 1);
 });
+
+test("a failed alert feed does not block later scheduler batches and can retry", async () => {
+  const kv = new MemoryKv();
+  const env = { PUSH_SCHEDULES: kv, VAPID_PUBLIC_KEY: "test", VAPID_PRIVATE_JWK: "test" };
+  const now = new Date();
+  const time = `${String(now.getUTCHours()).padStart(2, "0")}:${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`;
+  for (let i = 0; i < 11; i++) {
+    const response = await savePushSchedule({ env, request: makeRequest({ subscription, clientToken, timeZone: "UTC",
+      schedule: { ...schedule, id: `batch-${i}`, stopId: `stop-${i}`, time, weekdays: [0,1,2,3,4,5,6], alertOnly: true },
+    }) });
+    assert.equal(response.status, 200);
+  }
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  let failing = true;
+  const visited = [];
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    visited.push(path);
+    if (failing && path.includes("/stop-0/")) throw new Error("Temporary feed failure");
+    return Response.json([]);
+  };
+  console.error = () => {};
+  try {
+    await runScheduledPush({}, env);
+    assert.equal(visited.length, 11);
+    const failedKey = [...kv.store.keys()].find((key) => key.startsWith("schedule:") && key.includes(":batch-0:"));
+    assert.equal(JSON.parse(kv.store.get(failedKey)).lastFiredKey, "");
+    failing = false;
+    visited.length = 0;
+    await runScheduledPush({}, env);
+    assert.equal(visited.length, 1);
+    assert.ok(JSON.parse(kv.store.get(failedKey)).lastFiredKey);
+  } finally { globalThis.fetch = originalFetch; console.error = originalError; }
+});

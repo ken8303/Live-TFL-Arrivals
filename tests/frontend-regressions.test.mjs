@@ -68,3 +68,95 @@ test("failed server sync keeps its warning while successful saves confirm succes
 test("local and deployed frontend copies match", async () => {
   assert.equal(await readFile(new URL("../app.js", import.meta.url), "utf8"), source);
 });
+
+test("failed reminder deletion retains the local schedule for retry", async () => {
+  for (const outcome of ["http-error", "network-error", "success"]) {
+    const schedule = { id: "delete-me", title: "Bus" };
+    const statuses = [];
+    const button = { dataset: { scheduleAction: "delete", scheduleId: schedule.id } };
+    const ctx = vm.createContext({
+      state: { savedSchedules: [schedule], serverPushSubscription: { endpoint: "https://example.test/push" } },
+      console: { warn: noop }, getPushDeviceToken: () => "token",
+      fetch: async () => {
+        if (outcome === "network-error") throw new Error("offline");
+        return { ok: outcome === "success", status: 503, json: async () => ({ error: "Try again" }) };
+      },
+      persistSavedSchedules: noop, scheduleSavedNotifications: noop, refreshSchedulerUi: noop,
+      setStatus: (text, tone) => statuses.push({ text, tone }),
+    });
+    vm.runInContext(functions("handleSavedSchedulesClick", "syncDeletedScheduleToServer"), ctx);
+    await ctx.handleSavedSchedulesClick({ target: { closest: () => button } });
+    assert.equal(ctx.state.savedSchedules.length, outcome === "success" ? 0 : 1);
+    assert.equal(statuses.at(-1).tone, outcome === "success" ? "ready" : "error");
+    assert.equal(button.disabled, false);
+  }
+});
+
+test("overlapping scheduler wakeups deliver a due reminder only once", async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  let sends = 0;
+  const schedule = { id: "morning" };
+  const ctx = vm.createContext({
+    state: { savedSchedules: [schedule] }, SCHEDULE_CATCHUP_MS: 600_000,
+    getPreviousScheduleTime: () => new Date(Date.now() - 1000),
+    sendScheduleNotification: async () => { sends++; await pending; return true; },
+    persistSavedSchedules: noop, renderSavedSchedules: noop,
+  });
+  vm.runInContext(functions("runDueSchedules"), ctx);
+  const first = ctx.runDueSchedules();
+  const second = ctx.runDueSchedules();
+  release();
+  await Promise.all([first, second]);
+  assert.equal(sends, 1);
+  assert.ok(schedule.lastFiredAt);
+});
+
+test("failed local delivery remains eligible for retry", async () => {
+  const schedule = { id: "morning" };
+  let delivered = false;
+  const ctx = vm.createContext({
+    state: { savedSchedules: [schedule] }, SCHEDULE_CATCHUP_MS: 600_000,
+    getPreviousScheduleTime: () => new Date(Date.now() - 1000),
+    sendScheduleNotification: async () => delivered,
+    persistSavedSchedules: noop, renderSavedSchedules: noop,
+  });
+  vm.runInContext(functions("runDueSchedules"), ctx);
+  await ctx.runDueSchedules();
+  assert.equal(schedule.lastFiredAt, undefined);
+  delivered = true;
+  await ctx.runDueSchedules();
+  assert.ok(schedule.lastFiredAt);
+});
+
+test("loading malformed saved schedules keeps valid reminders and discards unusable entries", () => {
+  const valid = { id: "valid", type: "bus", title: "Morning", time: "08:00", weekdays: [1, 2] };
+  for (const raw of ["null", "{}", JSON.stringify([null, {}, { ...valid, weekdays: "Monday" }, valid])]) {
+    const ctx = vm.createContext({ state: {}, SCHEDULE_STORAGE_KEY: "test", console,
+      window: { localStorage: { getItem: () => raw } },
+    });
+    vm.runInContext(functions("loadSavedSchedules"), ctx);
+    ctx.loadSavedSchedules();
+    assert.ok(Array.isArray(ctx.state.savedSchedules));
+    assert.equal(ctx.state.savedSchedules.length, raw.startsWith("[") ? 1 : 0);
+  }
+});
+
+test("notification delivery reports failures and only saves alert state after success", async () => {
+  const schedule = { title: "Morning", alertOnly: true, alertState: { platform: "1" } };
+  let fail = true;
+  const ctx = vm.createContext({
+    window: { Notification: {}, location: { href: "https://example.test" } },
+    Notification: { permission: "granted" }, console: { error: noop },
+    fetchScheduleAlertLines: async () => ({ lines: ["Platform changed"], alertState: { platform: "2" } }),
+    showAppNotification: async () => { if (fail) throw new Error("Delivery failed"); },
+  });
+  vm.runInContext(functions("sendScheduleNotification"), ctx);
+  assert.equal(await ctx.sendScheduleNotification(schedule), false);
+  assert.equal(schedule.alertState.platform, "1");
+  fail = false;
+  assert.equal(await ctx.sendScheduleNotification(schedule), true);
+  assert.equal(schedule.alertState.platform, "2");
+  ctx.Notification.permission = "denied";
+  assert.equal(await ctx.sendScheduleNotification(schedule), false);
+});

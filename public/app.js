@@ -2418,7 +2418,14 @@ function buildGoogleMapEmbedUrl(location, points) {
 function loadSavedSchedules() {
   try {
     const raw = window.localStorage.getItem(SCHEDULE_STORAGE_KEY);
-    state.savedSchedules = raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.savedSchedules = Array.isArray(parsed) ? parsed.filter((schedule) =>
+      schedule && typeof schedule.id === "string" && schedule.id.length > 0 &&
+      ["bus", "train"].includes(schedule.type) &&
+      typeof schedule.time === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(schedule.time) &&
+      Array.isArray(schedule.weekdays) && schedule.weekdays.length > 0 &&
+      schedule.weekdays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    ) : [];
   } catch (error) {
     console.error("Could not load saved schedules", error);
     state.savedSchedules = [];
@@ -2911,7 +2918,7 @@ async function saveCurrentSchedule() {
   if (synced !== false) setStatus(`Saved scheduler reminder for ${schedule.title}.`, "ready");
 }
 
-function handleSavedSchedulesClick(event) {
+async function handleSavedSchedulesClick(event) {
   const actionButton = event.target.closest("[data-schedule-action]");
   if (!actionButton) return;
 
@@ -2928,13 +2935,21 @@ function handleSavedSchedulesClick(event) {
   }
 
   if (scheduleAction === "delete") {
+    if (actionButton.disabled) return;
+    actionButton.disabled = true;
+    let deleted;
+    try {
+      deleted = await syncDeletedScheduleToServer(schedule);
+    } finally {
+      actionButton.disabled = false;
+    }
+    if (!deleted) return;
     state.savedSchedules = state.savedSchedules.filter((item) => item.id !== scheduleId);
     if (state.schedulerDraft?.id === scheduleId) {
       state.schedulerDraft = state.savedSchedules[0] ? { ...state.savedSchedules[0] } : null;
       syncSchedulerFormFromDraft();
     }
     persistSavedSchedules();
-    syncDeletedScheduleToServer(schedule);
     scheduleSavedNotifications();
     refreshSchedulerUi();
     setStatus(`Removed scheduler reminder for ${schedule.title}.`, "ready");
@@ -3134,10 +3149,10 @@ async function syncScheduleToServer(schedule) {
 }
 
 async function syncDeletedScheduleToServer(schedule) {
-  if (!state.serverPushSubscription || !schedule?.id) return;
+  if (!state.serverPushSubscription || !schedule?.id) return true;
 
   try {
-    await fetch("/api/push/schedules/delete", {
+    const response = await fetch("/api/push/schedules/delete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -3146,8 +3161,15 @@ async function syncDeletedScheduleToServer(schedule) {
         clientToken: getPushDeviceToken(),
       }),
     });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Server deletion failed with status ${response.status}.`);
+    }
+    return true;
   } catch (error) {
     console.warn("Could not delete server push schedule", error);
+    setStatus("Could not remove the server reminder. It is still saved here; please try deleting it again.", "error");
+    return false;
   }
 }
 
@@ -3274,28 +3296,35 @@ function scheduleSavedNotifications() {
 }
 
 async function runDueSchedules() {
-  const now = new Date();
-  let changed = false;
-  const dueSchedules = state.savedSchedules
-    .map((schedule) => ({
-      schedule,
-      dueAt: getPreviousScheduleTime(schedule, now),
-    }))
-    .filter(({ schedule, dueAt }) => {
-      if (!dueAt) return false;
-      if (now.getTime() - dueAt.getTime() > SCHEDULE_CATCHUP_MS) return false;
-      return dueAt.getTime() > Number(schedule.lastFiredAt || 0);
-    });
+  if (state.runningDueSchedules) return;
+  state.runningDueSchedules = true;
+  try {
+    const now = new Date();
+    let changed = false;
+    const dueSchedules = state.savedSchedules
+      .map((schedule) => ({
+        schedule,
+        dueAt: getPreviousScheduleTime(schedule, now),
+      }))
+      .filter(({ schedule, dueAt }) => {
+        if (!dueAt) return false;
+        if (now.getTime() - dueAt.getTime() > SCHEDULE_CATCHUP_MS) return false;
+        return dueAt.getTime() > Number(schedule.lastFiredAt || 0);
+      });
 
-  for (const { schedule, dueAt } of dueSchedules) {
-    await sendScheduleNotification(schedule);
-    schedule.lastFiredAt = dueAt.getTime();
-    changed = true;
-  }
+    for (const { schedule, dueAt } of dueSchedules) {
+      if (!state.savedSchedules.includes(schedule)) continue;
+      if (!(await sendScheduleNotification(schedule))) continue;
+      schedule.lastFiredAt = dueAt.getTime();
+      changed = true;
+    }
 
-  if (changed) {
-    persistSavedSchedules();
-    renderSavedSchedules();
+    if (changed) {
+      persistSavedSchedules();
+      renderSavedSchedules();
+    }
+  } finally {
+    state.runningDueSchedules = false;
   }
 }
 
@@ -3328,23 +3357,28 @@ function normaliseScheduleTimeStep(value) {
 }
 
 async function sendScheduleNotification(schedule) {
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return false;
 
   try {
     if (schedule.alertOnly) {
       const alertResult = await fetchScheduleAlertLines(schedule);
-      schedule.alertState = alertResult.alertState;
-      if (!alertResult.lines.length) return;
+      if (!alertResult.lines.length) {
+        schedule.alertState = alertResult.alertState;
+        return true;
+      }
       await showAppNotification(schedule.title, alertResult.lines.join(" | "), schedule.pageUrl || window.location.href);
-      return;
+      schedule.alertState = alertResult.alertState;
+      return true;
     }
     const lines = await fetchScheduleNotificationLines(schedule);
     const body = lines.length
       ? lines.join(" | ")
       : `No live ${schedule.type === "bus" ? "bus" : "train"} times are available right now.`;
     await showAppNotification(schedule.title, body, schedule.pageUrl || window.location.href);
+    return true;
   } catch (error) {
     console.error("Could not send schedule notification", error);
+    return false;
   }
 }
 
