@@ -10,6 +10,7 @@ import {
 const API_BASE = "https://api.tfl.gov.uk";
 const SCHEDULE_PREFIX = "schedule:";
 const SCHEDULE_INDEX_PREFIX = "schedule-index:";
+const FIRED_PREFIX = "fired:";
 const RATE_LIMIT_PREFIX = "rate-limit:";
 const DEFAULT_TTL_SECONDS = 60 * 60;
 const MAX_PUSH_LINES = 3;
@@ -28,7 +29,7 @@ const ALLOWED_PUSH_HOSTS = new Set([
 
 export async function getPushPublicKey({ env }) {
   return json({
-    configured: Boolean(env.PUSH_SCHEDULES && env.VAPID_PUBLIC_KEY && getVapidPrivateKey(env)),
+    configured: Boolean(env.PUSH_SCHEDULES && env.VAPID_PUBLIC_KEY && getVapidPrivateKey(env) && isValidVapidSubject(env.VAPID_SUBJECT)),
     publicKey: env.VAPID_PUBLIC_KEY || "",
   });
 }
@@ -43,13 +44,14 @@ export async function savePushSchedule({ request, env }) {
   const rateLimit = await enforceWriteRateLimit(request, env, "save-schedule", WRITE_RATE_LIMIT_MAX);
   if (rateLimit) return rateLimit;
 
-  const payload = await request.json();
+  const payload = await readJsonBody(request);
+  if (!payload) return json({ error: "A valid JSON body is required." }, 400);
   const subscription = normaliseSubscription(payload.subscription);
   const schedule = normaliseSchedule(payload.schedule);
   const timeZone = normaliseTimeZone(payload.timeZone);
   const clientToken = normaliseClientToken(payload.clientToken);
 
-  if (!subscription || !schedule || !clientToken) {
+  if (!subscription || !(await hasValidSubscriptionKeys(subscription)) || !schedule || !clientToken) {
     return json({ error: "A valid push subscription, schedule, and device token are required." }, 400);
   }
 
@@ -79,14 +81,17 @@ export async function savePushSchedule({ request, env }) {
       schedule,
       timeZone,
       clientTokenHash,
-      lastFiredKey: existing?.lastFiredKey || "",
-      alertState: existing?.alertState || {},
+      ...(existing?.lastFiredKey || existing?.alertState ? {
+        lastFiredKey: existing.lastFiredKey || "",
+        alertState: existing.alertState || {},
+      } : {}),
       updatedAt: new Date().toISOString(),
     }),
   );
   await env.PUSH_SCHEDULES.put(indexKey, JSON.stringify({ key, clientTokenHash }));
   if (existingKey && existingKey !== key) {
     await env.PUSH_SCHEDULES.delete(existingKey);
+    await env.PUSH_SCHEDULES.delete(getFiredKey(existingKey));
   }
 
   return json({ ok: true, scheduleId: schedule.id });
@@ -102,7 +107,8 @@ export async function deletePushSchedule({ request, env }) {
   const rateLimit = await enforceWriteRateLimit(request, env, "delete-schedule", WRITE_RATE_LIMIT_MAX);
   if (rateLimit) return rateLimit;
 
-  const payload = await request.json();
+  const payload = await readJsonBody(request);
+  if (!payload) return json({ error: "A valid JSON body is required." }, 400);
   const endpoint = String(payload.endpoint || "");
   const scheduleId = String(payload.scheduleId || "");
   const clientToken = normaliseClientToken(payload.clientToken);
@@ -127,7 +133,10 @@ export async function deletePushSchedule({ request, env }) {
   }
   // Keep a tombstone to suppress old records once the deletion propagates through KV.
   await env.PUSH_SCHEDULES.put(indexKey, JSON.stringify({ key: null, clientTokenHash }));
-  await Promise.all([...keys].map((key) => env.PUSH_SCHEDULES.delete(key)));
+  await Promise.all([...keys].flatMap((key) => [
+    env.PUSH_SCHEDULES.delete(key),
+    env.PUSH_SCHEDULES.delete(getFiredKey(key)),
+  ]));
   return json({ ok: true });
 }
 
@@ -141,10 +150,11 @@ export async function sendPushTest({ request, env }) {
   const rateLimit = await enforceWriteRateLimit(request, env, "test-push", TEST_PUSH_RATE_LIMIT_MAX);
   if (rateLimit) return rateLimit;
 
-  const payload = await request.json();
+  const payload = await readJsonBody(request);
+  if (!payload) return json({ error: "A valid JSON body is required." }, 400);
   const subscription = normaliseSubscription(payload.subscription);
   const clientToken = normaliseClientToken(payload.clientToken);
-  if (!subscription || !clientToken) {
+  if (!subscription || !(await hasValidSubscriptionKeys(subscription)) || !clientToken) {
     return json({ error: "A valid push subscription and device token are required." }, 400);
   }
   if (!(await hasSavedPushEndpoint(env, subscription, clientToken))) {
@@ -154,7 +164,7 @@ export async function sendPushTest({ request, env }) {
   const result = await sendWebPush(
     subscription,
     {
-      title: payload.title || "Live TfL Arrivals",
+      title: String(payload.title || "Live TfL Arrivals").slice(0, 120),
       body: "Server push notification is working.",
       url: normaliseSameOriginPath(payload.url),
     },
@@ -192,14 +202,20 @@ async function processStoredSchedule(key, env, dueKey) {
   if (!stored?.subscription || !stored?.schedule) return null;
   if (!(await isCurrentScheduleKey(env, key))) return null;
 
-  if (!dueKey || stored.lastFiredKey === dueKey) return null;
+  const firedKey = getFiredKey(key);
+  const fired = await env.PUSH_SCHEDULES.get(firedKey, "json") || {
+    lastFiredKey: stored.lastFiredKey || "",
+    alertState: stored.alertState || {},
+  };
+  if (!dueKey || fired.lastFiredKey === dueKey) return null;
 
-  const notification = await getScheduleNotification(stored.schedule, env, stored.alertState);
-  stored.alertState = notification.alertState;
+  const notification = await getScheduleNotification(stored.schedule, env, fired.alertState);
+  fired.alertState = notification.alertState;
   if (!notification.body) {
-    stored.lastFiredKey = dueKey;
-    stored.lastFiredAt = new Date().toISOString();
-    await env.PUSH_SCHEDULES.put(key, JSON.stringify(stored));
+    if (!(await isCurrentScheduleKey(env, key))) return null;
+    fired.lastFiredKey = dueKey;
+    fired.lastFiredAt = new Date().toISOString();
+    await env.PUSH_SCHEDULES.put(firedKey, JSON.stringify(fired));
     return { gone: false, key };
   }
   if (!(await isCurrentScheduleKey(env, key))) return null;
@@ -214,14 +230,14 @@ async function processStoredSchedule(key, env, dueKey) {
   );
 
   if (result.gone) {
-    await env.PUSH_SCHEDULES.delete(key);
+    await Promise.all([env.PUSH_SCHEDULES.delete(key), env.PUSH_SCHEDULES.delete(firedKey)]);
     return { gone: true, key };
   }
 
   if (result.ok) {
-    stored.lastFiredKey = dueKey;
-    stored.lastFiredAt = new Date().toISOString();
-    await env.PUSH_SCHEDULES.put(key, JSON.stringify(stored));
+    fired.lastFiredKey = dueKey;
+    fired.lastFiredAt = new Date().toISOString();
+    await env.PUSH_SCHEDULES.put(firedKey, JSON.stringify(fired));
   }
   return { gone: false, key };
 }
@@ -238,6 +254,14 @@ function validateWriteRequest(request) {
   return null;
 }
 
+async function readJsonBody(request) {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
 export function isSameOriginPost(request) {
   const origin = request.headers.get("Origin");
   const host = request.headers.get("Host");
@@ -251,6 +275,10 @@ export function isSameOriginPost(request) {
 }
 
 async function enforceWriteRateLimit(request, env, action, limit) {
+  if (env.PUSH_RATE_LIMITER) {
+    const { success } = await env.PUSH_RATE_LIMITER.limit({ key: `${action}:${getClientAddress(request)}` });
+    return success ? null : json({ error: "Too many push requests. Please wait a minute and try again." }, 429);
+  }
   if (!env.PUSH_SCHEDULES) return null;
   const clientKey = await sha256(`${getClientAddress(request)}:${action}`);
   const windowId = Math.floor(Date.now() / (RATE_LIMIT_WINDOW_SECONDS * 1000));
@@ -443,15 +471,19 @@ async function sendWebPush(subscription, payload, env) {
       return { ok: false, help: "VAPID keys are not configured." };
     }
 
-    const encrypted = await encryptPushPayload(subscription, JSON.stringify(payload));
+    let encrypted;
+    try {
+      encrypted = await encryptPushPayload(subscription, JSON.stringify(payload));
+    } catch (error) {
+      return { ok: false, gone: error.name === "DataError", help: error.message };
+    }
     const jwt = await createVapidJwt(subscription.endpoint, env);
     const response = await fetch(subscription.endpoint, {
       method: "POST",
       headers: {
-        Authorization: `WebPush ${jwt}`,
+        Authorization: `vapid t=${jwt}, k=${env.VAPID_PUBLIC_KEY}`,
         "Content-Encoding": "aes128gcm",
         "Content-Type": "application/octet-stream",
-        "Crypto-Key": `p256ecdsa=${env.VAPID_PUBLIC_KEY}`,
         TTL: String(DEFAULT_TTL_SECONDS),
       },
       body: encrypted,
@@ -459,7 +491,7 @@ async function sendWebPush(subscription, payload, env) {
 
     return {
       ok: response.status >= 200 && response.status < 300,
-      gone: response.status === 404 || response.status === 410,
+      gone: [400, 404, 410].includes(response.status),
       status: response.status,
       help: response.ok ? "" : await response.text(),
     };
@@ -490,17 +522,24 @@ async function encryptPushPayload(subscription, payloadText) {
 }
 
 async function createVapidJwt(endpoint, env) {
+  if (!isValidVapidSubject(env.VAPID_SUBJECT)) {
+    throw new Error("VAPID_SUBJECT must be a contact mailto: or HTTPS URL.");
+  }
   const origin = new URL(endpoint).origin;
   const header = base64UrlEncode(textBytes(JSON.stringify({ typ: "JWT", alg: "ES256" })));
   const body = base64UrlEncode(textBytes(JSON.stringify({
     aud: origin,
     exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60,
-    sub: env.VAPID_SUBJECT || "mailto:admin@example.com",
+    sub: env.VAPID_SUBJECT,
   })));
   const token = `${header}.${body}`;
   const key = await importVapidPrivateKey(env);
   const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, textBytes(token)));
   return `${token}.${base64UrlEncode(normaliseEcdsaSignature(signature))}`;
+}
+
+function isValidVapidSubject(value) {
+  return /^mailto:[^\s@]+@[^\s@]+\.[^\s@]+$|^https:\/\/[^\s]+$/i.test(value || "");
 }
 
 async function importVapidPrivateKey(env) {
@@ -574,6 +613,18 @@ function normaliseSubscription(subscription) {
       auth,
     },
   };
+}
+
+async function hasValidSubscriptionKeys(subscription) {
+  try {
+    const publicKey = base64UrlToUint8Array(subscription.keys.p256dh);
+    const auth = base64UrlToUint8Array(subscription.keys.auth);
+    if (publicKey.length !== 65 || publicKey[0] !== 4 || auth.length !== 16) return false;
+    await crypto.subtle.importKey("raw", publicKey, { name: "ECDH", namedCurve: "P-256" }, false, []);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normaliseSchedule(schedule) {
@@ -660,8 +711,9 @@ async function getEndpointMeta(env, endpointHash) {
   // Derive the inventory from independent records; never overwrite a shared map.
   const keys = await listScheduleKeys(env, `${SCHEDULE_PREFIX}${endpointHash}:`);
   const schedules = {};
-  for (const key of keys) {
-    if (!(await isCurrentScheduleKey(env, key))) continue;
+  const current = await Promise.all(keys.map((key) => isCurrentScheduleKey(env, key)));
+  for (const [index, key] of keys.entries()) {
+    if (!current[index]) continue;
     const id = parseScheduleKey(key)?.scheduleId || key.split(":")[2];
     if (id) schedules[id] = key;
   }
@@ -670,6 +722,10 @@ async function getEndpointMeta(env, endpointHash) {
 
 function getScheduleIndexKey(endpointHash, scheduleId) {
   return `${SCHEDULE_INDEX_PREFIX}${endpointHash}:${normaliseScheduleId(scheduleId)}`;
+}
+
+function getFiredKey(scheduleKey) {
+  return `${FIRED_PREFIX}${scheduleKey}`;
 }
 
 function getLegacyScheduleKey(endpointHash, scheduleId) {

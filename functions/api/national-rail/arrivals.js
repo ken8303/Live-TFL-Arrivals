@@ -144,7 +144,7 @@ function parseDarwinServices(xml, rows) {
 }
 
 function getTagText(xml, tag) {
-  const match = xml.match(new RegExp(`<[^<>:]*:?${tag}[^>]*>([\\s\\S]*?)<\\/[^<>:]*:?${tag}>`, "i"));
+  const match = xml.match(new RegExp(`<[^<>:]*:?${tag}\\b[^>]*>([\\s\\S]*?)<\\/[^<>:]*:?${tag}\\s*>`, "i"));
   return match ? decodeXml(match[1].replace(/<[^>]+>/g, "").trim()) : "";
 }
 

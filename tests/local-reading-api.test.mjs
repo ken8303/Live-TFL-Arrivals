@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import server from "../server.js";
+import server from "../server.cjs";
 
 function request(url) {
   return new Promise((resolve) => {

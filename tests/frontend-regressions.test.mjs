@@ -65,10 +65,6 @@ test("failed server sync keeps its warning while successful saves confirm succes
   }
 });
 
-test("local and deployed frontend copies match", async () => {
-  assert.equal(await readFile(new URL("../app.js", import.meta.url), "utf8"), source);
-});
-
 test("failed reminder deletion retains the local schedule for retry", async () => {
   for (const outcome of ["http-error", "network-error", "success"]) {
     const schedule = { id: "delete-me", title: "Bus" };
@@ -159,4 +155,33 @@ test("notification delivery reports failures and only saves alert state after su
   assert.equal(schedule.alertState.platform, "2");
   ctx.Notification.permission = "denied";
   assert.equal(await ctx.sendScheduleNotification(schedule), false);
+});
+
+test("blocked local storage does not crash favourites, schedules or push token setup", () => {
+  const failingStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+  const ctx = vm.createContext({ state: { savedSchedules: [], favourites: [] }, window: { localStorage: failingStorage },
+    console: { error: noop }, SCHEDULE_STORAGE_KEY: "schedule", FAVOURITES_STORAGE_KEY: "favourites",
+    PUSH_DEVICE_TOKEN_STORAGE_KEY: "device" });
+  vm.runInContext(functions("persistSavedSchedules", "persistFavourites", "getPushDeviceToken"), ctx);
+  assert.equal(ctx.persistSavedSchedules(), false);
+  assert.equal(ctx.persistFavourites(), false);
+  assert.equal(ctx.getPushDeviceToken(), "");
+});
+
+test("an unsaved local reminder is not registered for server push", async () => {
+  let synced = false;
+  const statuses = [];
+  const ctx = vm.createContext({
+    state: { schedulerDraft: { id: "test", title: "Bus" }, savedSchedules: [] },
+    schedulerTimeInput: { value: "08:00" }, getSelectedWeekdaysFromForm: () => [1],
+    normaliseScheduleTimeStep: (value) => value, getSelectedNotificationMode: () => "reminder",
+    persistSavedSchedules: () => false, scheduleSavedNotifications: noop,
+    syncScheduleToServer: async () => { synced = true; return true; },
+    refreshSchedulerUi: noop, updateBookmarkUrl: noop,
+    setStatus: (message, tone) => statuses.push({ message, tone }),
+  });
+  vm.runInContext(functions("saveCurrentSchedule"), ctx);
+  await ctx.saveCurrentSchedule();
+  assert.equal(synced, false);
+  assert.equal(statuses.at(-1).tone, "error");
 });

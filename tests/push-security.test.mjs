@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createECDH, randomBytes } from "node:crypto";
 
 import {
   deletePushSchedule,
@@ -34,11 +35,13 @@ class MemoryKv {
   }
 }
 
+const devicePublicKey = createECDH("prime256v1");
+devicePublicKey.generateKeys();
 const subscription = {
   endpoint: "https://fcm.googleapis.com/fcm/send/test-endpoint",
   keys: {
-    p256dh: "A".repeat(88),
-    auth: "B".repeat(24),
+    p256dh: devicePublicKey.getPublicKey().toString("base64url"),
+    auth: randomBytes(16).toString("base64url"),
   },
 };
 
@@ -215,11 +218,145 @@ test("a failed alert feed does not block later scheduler batches and can retry",
     await runScheduledPush({}, env);
     assert.equal(visited.length, 11);
     const failedKey = [...kv.store.keys()].find((key) => key.startsWith("schedule:") && key.includes(":batch-0:"));
-    assert.equal(JSON.parse(kv.store.get(failedKey)).lastFiredKey, "");
+    assert.equal([...kv.store.keys()].some((key) => key === `fired:${failedKey}`), false);
     failing = false;
     visited.length = 0;
     await runScheduledPush({}, env);
     assert.equal(visited.length, 1);
-    assert.ok(JSON.parse(kv.store.get(failedKey)).lastFiredKey);
+    assert.ok(JSON.parse(kv.store.get(`fired:${failedKey}`)).lastFiredKey);
   } finally { globalThis.fetch = originalFetch; console.error = originalError; }
+});
+
+test("malformed JSON returns 400 for every push write route", async () => {
+  const env = { PUSH_SCHEDULES: new MemoryKv(), PUSH_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+  for (const handler of [savePushSchedule, deletePushSchedule, sendPushTest]) {
+    const request = new Request("https://tfl.example.com/api/push/schedules", {
+      method: "POST",
+      headers: { Host: "tfl.example.com", Origin: "https://tfl.example.com", "Content-Type": "application/json" },
+      body: "{broken",
+    });
+    const response = await handler({ request, env });
+    assert.equal(response.status, 400);
+  }
+});
+
+test("invalid subscription keys are rejected before storage", async () => {
+  const env = { PUSH_SCHEDULES: new MemoryKv(), PUSH_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+  const response = await savePushSchedule({ env, request: makeRequest({
+    subscription: { ...subscription, keys: { ...subscription.keys, p256dh: "A".repeat(88) } }, schedule, clientToken,
+  }) });
+  assert.equal(response.status, 400);
+  assert.equal(env.PUSH_SCHEDULES.store.size, 0);
+});
+
+test("Workers rate limiter uses its binding without writing KV counters", async () => {
+  const kv = new MemoryKv();
+  const checked = [];
+  const env = { PUSH_SCHEDULES: kv, PUSH_RATE_LIMITER: { limit: async ({ key }) => {
+    checked.push(key);
+    return { success: checked.length === 1 };
+  } } };
+  assert.equal((await savePushSchedule({ env, request: makeRequest({ subscription, schedule, clientToken }) })).status, 200);
+  assert.equal((await savePushSchedule({ env, request: makeRequest({ subscription, schedule, clientToken }) })).status, 429);
+  assert.equal(checked.length, 2);
+  assert.equal([...kv.store.keys()].some((key) => key.startsWith("rate-limit:")), false);
+});
+
+async function makeVapidEnv(kv) {
+  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+  const publicKey = Buffer.from(await crypto.subtle.exportKey("raw", pair.publicKey)).toString("base64url");
+  return { PUSH_SCHEDULES: kv, VAPID_PUBLIC_KEY: publicKey,
+    VAPID_PRIVATE_JWK: JSON.stringify(jwk), VAPID_SUBJECT: "mailto:owner@example.com" };
+}
+
+test("cron keeps a concurrent schedule edit and stores delivery state separately", async () => {
+  const kv = new MemoryKv();
+  const env = await makeVapidEnv(kv);
+  const now = new Date();
+  const time = `${String(now.getUTCHours()).padStart(2, "0")}:${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`;
+  const original = { ...schedule, title: "Old title", time, weekdays: [0,1,2,3,4,5,6] };
+  const save = (item) => savePushSchedule({ env, request: makeRequest({ subscription, schedule: item, clientToken, timeZone: "UTC" }) });
+  assert.equal((await save(original)).status, 200);
+  const scheduleKey = [...kv.store.keys()].find((key) => key.startsWith("schedule:"));
+  let releaseFeed;
+  let feedStarted;
+  const started = new Promise((resolve) => { feedStarted = resolve; });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === "POST") return new Response(null, { status: 201 });
+    feedStarted();
+    await new Promise((resolve) => { releaseFeed = resolve; });
+    return Response.json([{ modeName: "bus", lineName: "17", destinationName: "Town", timeToStation: 60 }]);
+  };
+  try {
+    const cron = runScheduledPush({}, env);
+    await started;
+    assert.equal((await save({ ...original, title: "Edited title" })).status, 200);
+    releaseFeed();
+    await cron;
+    assert.equal(JSON.parse(kv.store.get(scheduleKey)).schedule.title, "Edited title");
+    assert.ok(JSON.parse(kv.store.get(`fired:${scheduleKey}`)).lastFiredKey);
+  } finally { globalThis.fetch = originalFetch; if (releaseFeed) releaseFeed(); }
+});
+
+test("permanent push response removes an unusable schedule", async () => {
+  const kv = new MemoryKv();
+  const env = await makeVapidEnv(kv);
+  const now = new Date();
+  const time = `${String(now.getUTCHours()).padStart(2, "0")}:${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`;
+  assert.equal((await savePushSchedule({ env, request: makeRequest({ subscription, clientToken, timeZone: "UTC",
+    schedule: { ...schedule, time, weekdays: [0,1,2,3,4,5,6] },
+  }) })).status, 200);
+  const originalFetch = globalThis.fetch;
+  let authHeader;
+  globalThis.fetch = async (url, options) => {
+    if (options?.method === "POST") {
+      authHeader = options.headers.Authorization;
+      return new Response("Invalid endpoint", { status: 400 });
+    }
+    return Response.json([{ modeName: "bus", lineName: "17", destinationName: "Town", timeToStation: 60 }]);
+  };
+  try { await runScheduledPush({}, env); } finally { globalThis.fetch = originalFetch; }
+  assert.match(authHeader, /^vapid t=[^,]+, k=/);
+  assert.equal([...kv.store.keys()].some((key) => key.startsWith("schedule:")), false);
+});
+
+test("push test caps oversized titles and requires a VAPID contact", async () => {
+  const kv = new MemoryKv();
+  const env = await makeVapidEnv(kv);
+  assert.equal((await (await import("../functions/api/push.js")).getPushPublicKey({ env })).status, 200);
+  const missingContact = await (await import("../functions/api/push.js")).getPushPublicKey({ env: { ...env, VAPID_SUBJECT: "" } });
+  assert.equal((await missingContact.json()).configured, false);
+  assert.equal((await savePushSchedule({ env, request: makeRequest({ subscription, schedule, clientToken }) })).status, 200);
+  const originalFetch = globalThis.fetch;
+  let payloadBytes;
+  globalThis.fetch = async (_url, options) => {
+    payloadBytes = options.body.byteLength;
+    return new Response(null, { status: 201 });
+  };
+  try {
+    const response = await sendPushTest({ env, request: makeRequest({ subscription, clientToken, title: "X".repeat(10_000) }) });
+    assert.equal(response.status, 200);
+    assert.ok(payloadBytes < 4096);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("editing an old reminder preserves its delivery state until migration", async () => {
+  const kv = new MemoryKv();
+  const env = { PUSH_SCHEDULES: kv, PUSH_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+  const save = (title) => savePushSchedule({ env, request: makeRequest({ subscription,
+    schedule: { ...schedule, title }, clientToken, timeZone: "UTC",
+  }) });
+  assert.equal((await save("Old")).status, 200);
+  const key = [...kv.store.keys()].find((item) => item.startsWith("schedule:"));
+  const legacy = JSON.parse(kv.store.get(key));
+  legacy.lastFiredKey = "2026-10-20T08:00";
+  legacy.alertState = { platforms: { train: "2" } };
+  kv.store.set(key, JSON.stringify(legacy));
+  assert.equal((await save("Edited")).status, 200);
+  const saved = JSON.parse(kv.store.get(key));
+  assert.equal(saved.schedule.title, "Edited");
+  assert.equal(saved.lastFiredKey, legacy.lastFiredKey);
+  assert.deepEqual(saved.alertState, legacy.alertState);
 });

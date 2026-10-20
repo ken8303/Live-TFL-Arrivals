@@ -5,8 +5,6 @@ const path = require("node:path");
 const ROOT = __dirname;
 const PORT = Number(process.env.PORT) || 8000;
 const HOST = process.env.HOST || "127.0.0.1";
-const TFL_API_BASE = "https://api.tfl.gov.uk";
-const TFL_ALLOWED_QUERY_PARAMS = new Set(["lat", "lon", "stopTypes", "modes", "radius", "page", "lineIds", "direction"]);
 const PUBLIC_FILES = new Set([
   "/",
   "/index.html",
@@ -88,44 +86,8 @@ if (require.main === module) {
 module.exports = server;
 
 async function handleTflProxy(url, response) {
-  const upstreamUrl = buildTflProxyUrl(url);
-  const upstreamResponse = await fetch(upstreamUrl, {
-    headers: {
-      Accept: "application/json",
-    },
-  });
-  response.writeHead(upstreamResponse.status, {
-    "Content-Type": upstreamResponse.headers.get("content-type") || "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
-  response.end(await upstreamResponse.text());
-}
-
-function buildTflProxyUrl(url) {
-  const path = url.pathname.slice("/api/tfl".length) || "/";
-  if (!isAllowedTflPath(path)) {
-    throw new Error("TfL endpoint is not allowed by this app.");
-  }
-
-  const upstreamUrl = new URL(`${TFL_API_BASE}${path}`);
-  url.searchParams.forEach((value, key) => {
-    if (!TFL_ALLOWED_QUERY_PARAMS.has(key)) return;
-    upstreamUrl.searchParams.set(key, value.slice(0, 300));
-  });
-  if (process.env.TFL_APP_KEY) upstreamUrl.searchParams.set("app_key", process.env.TFL_APP_KEY);
-  if (process.env.TFL_APP_ID) upstreamUrl.searchParams.set("app_id", process.env.TFL_APP_ID);
-  return upstreamUrl;
-}
-
-function isAllowedTflPath(pathname) {
-  return [
-    /^\/StopPoint$/,
-    /^\/StopPoint\/Mode\/[a-z0-9,-]+$/i,
-    /^\/StopPoint\/Search\/[^/]+$/i,
-    /^\/StopPoint\/[^/]+\/Arrivals$/i,
-    /^\/Place\/Search\/[^/]+$/i,
-    /^\/Line\/[^/]+\/Status$/i,
-  ].some((pattern) => pattern.test(pathname));
+  const { onRequestGet } = await import("./functions/api/tfl.js");
+  await sendApiResponse(await onRequestGet({ request: new Request(url.href), env: process.env }), response);
 }
 
 function loadEnv() {
@@ -171,7 +133,7 @@ function serveStatic(pathname, response) {
     return;
   }
 
-  const filePath = path.join(ROOT, publicPath);
+  const filePath = path.join(ROOT, "public", publicPath);
   fs.readFile(filePath, (error, content) => {
     if (error) {
       sendText(response, 404, "Not found");

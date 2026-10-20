@@ -15,6 +15,18 @@
       "id": "916e7f94df974967bb1cf3fd67f4b72d"
     }
   ],
+  "ratelimits": [
+    {
+      "name": "PUSH_RATE_LIMITER",
+      "namespace_id": "2026102001",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "2026102002",
+      "simple": { "limit": 120, "period": 60 }
+    }
+  ],
   "triggers": {
     "crons": ["*/5 * * * *"]
   },

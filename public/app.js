@@ -2433,7 +2433,13 @@ function loadSavedSchedules() {
 }
 
 function persistSavedSchedules() {
-  window.localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(state.savedSchedules));
+  try {
+    window.localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(state.savedSchedules));
+    return true;
+  } catch (error) {
+    console.error("Could not save schedules on this device", error);
+    return false;
+  }
 }
 
 function updateScheduleButtons() {
@@ -2453,7 +2459,13 @@ function loadFavourites() {
 }
 
 function persistFavourites() {
-  window.localStorage.setItem(FAVOURITES_STORAGE_KEY, JSON.stringify(state.favourites));
+  try {
+    window.localStorage.setItem(FAVOURITES_STORAGE_KEY, JSON.stringify(state.favourites));
+    return true;
+  } catch (error) {
+    console.error("Could not save favourites on this device", error);
+    return false;
+  }
 }
 
 function isValidFavourite(favourite) {
@@ -2537,7 +2549,7 @@ function toggleFavouriteFromSelection(type) {
     state.favourites.unshift(favourite);
     setStatus(`Added ${favourite.title} to favourites.`, "ready");
   }
-  persistFavourites();
+  if (persistFavourites() === false) setStatus("Favourites could not be saved on this device.", "error");
   renderFavourites();
   updateFavouriteButtons();
 }
@@ -2706,10 +2718,10 @@ async function handleFavouritesClick(event) {
 
   if (button.dataset.favouriteAction === "remove") {
     state.favourites = state.favourites.filter((item) => item.id !== favourite.id);
-    persistFavourites();
+    const persisted = persistFavourites();
     renderFavourites();
     updateFavouriteButtons();
-    setStatus(`Removed ${favourite.title} from favourites.`, "ready");
+    setStatus(persisted === false ? "Favourites could not be saved on this device." : `Removed ${favourite.title} from favourites.`, persisted === false ? "error" : "ready");
     return;
   }
 
@@ -2910,12 +2922,13 @@ async function saveCurrentSchedule() {
   }
 
   state.schedulerDraft = schedule;
-  persistSavedSchedules();
+  const persisted = persistSavedSchedules();
   scheduleSavedNotifications();
-  const synced = await syncScheduleToServer(schedule);
+  const synced = persisted === false ? false : await syncScheduleToServer(schedule);
   refreshSchedulerUi();
   updateBookmarkUrl();
-  if (synced !== false) setStatus(`Saved scheduler reminder for ${schedule.title}.`, "ready");
+  if (persisted === false) setStatus("Reminder could not be saved on this device.", "error");
+  else if (synced !== false) setStatus(`Saved scheduler reminder for ${schedule.title}.`, "ready");
 }
 
 async function handleSavedSchedulesClick(event) {
@@ -2936,6 +2949,10 @@ async function handleSavedSchedulesClick(event) {
 
   if (scheduleAction === "delete") {
     if (actionButton.disabled) return;
+    if (persistSavedSchedules() === false) {
+      setStatus("Reminder changes could not be saved on this device.", "error");
+      return;
+    }
     actionButton.disabled = true;
     let deleted;
     try {
@@ -2949,10 +2966,10 @@ async function handleSavedSchedulesClick(event) {
       state.schedulerDraft = state.savedSchedules[0] ? { ...state.savedSchedules[0] } : null;
       syncSchedulerFormFromDraft();
     }
-    persistSavedSchedules();
+    const persisted = persistSavedSchedules();
     scheduleSavedNotifications();
     refreshSchedulerUi();
-    setStatus(`Removed scheduler reminder for ${schedule.title}.`, "ready");
+    setStatus(persisted === false ? "Reminder changes could not be saved on this device." : `Removed scheduler reminder for ${schedule.title}.`, persisted === false ? "error" : "ready");
   }
 }
 
@@ -3044,7 +3061,12 @@ function createScheduleId() {
 }
 
 function getPushDeviceToken() {
-  let token = window.localStorage.getItem(PUSH_DEVICE_TOKEN_STORAGE_KEY) || "";
+  let token;
+  try {
+    token = window.localStorage.getItem(PUSH_DEVICE_TOKEN_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
   if (/^[a-zA-Z0-9_-]{32,160}$/.test(token)) return token;
 
   if (window.crypto?.randomUUID) {
@@ -3052,11 +3074,13 @@ function getPushDeviceToken() {
   } else if (window.crypto?.getRandomValues) {
     const bytes = window.crypto.getRandomValues(new Uint8Array(32));
     token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-  } else {
-    token = `device-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
-  }
+  } else return "";
 
-  window.localStorage.setItem(PUSH_DEVICE_TOKEN_STORAGE_KEY, token);
+  try {
+    window.localStorage.setItem(PUSH_DEVICE_TOKEN_STORAGE_KEY, token);
+  } catch {
+    return "";
+  }
   return token;
 }
 

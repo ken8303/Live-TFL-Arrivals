@@ -20,8 +20,10 @@ export async function onRequestGet({ request, env }) {
         Accept: "application/json",
       },
     });
-    const headers = new Headers(response.headers);
-    headers.set("Cache-Control", "no-store");
+    const headers = new Headers({
+      "Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -33,7 +35,7 @@ export async function onRequestGet({ request, env }) {
         error: "TfL data could not be loaded.",
         help: error.message,
       },
-      { status: 400 },
+      { status: error instanceof InvalidTflPathError ? 400 : 502 },
     );
   }
 }
@@ -42,7 +44,7 @@ export function buildTflApiUrl(request, env = {}) {
   const requestUrl = new URL(request.url);
   const path = requestUrl.pathname.slice(API_PREFIX.length) || "/";
   if (!isAllowedTflPath(path)) {
-    throw new Error("TfL endpoint is not allowed by this app.");
+    throw new InvalidTflPathError("TfL endpoint is not allowed by this app.");
   }
 
   const upstreamUrl = new URL(`${TFL_API_BASE}${path}`);
@@ -55,6 +57,8 @@ export function buildTflApiUrl(request, env = {}) {
   if (env.TFL_APP_ID) upstreamUrl.searchParams.set("app_id", env.TFL_APP_ID);
   return upstreamUrl;
 }
+
+class InvalidTflPathError extends Error {}
 
 function isAllowedTflPath(path) {
   return [

@@ -9,7 +9,7 @@ Static frontend with a small local server for protected National Rail requests.
 3. Start the server:
 
 ```sh
-node server.js
+node server.cjs
 ```
 
 4. Open:
@@ -18,22 +18,26 @@ node server.js
 http://127.0.0.1:8000/
 ```
 
-Do not open `index.html` directly when using National Rail data. A `file://` page cannot securely call the protected API.
+Do not open `public/index.html` directly when using National Rail data. A `file://` page cannot securely call the protected API.
 
 ## Security
 
-Never add National Rail credentials to `app.js`, `index.html`, or any other browser file. Browser files can be viewed by anyone using the site.
+Never add National Rail credentials to `public/app.js`, `public/index.html`, or any other browser file. Browser files can be viewed by anyone using the site.
 
 The server reads credentials from `.env`, calls National Rail from the backend, and only sends safe arrival data back to the browser.
 
 ## Cloudflare
 
-Cloudflare does not run `server.js`. That file is only for local development.
+Cloudflare does not run `server.cjs`. That file is only for local development.
 
-This project supports both deployment styles:
+The full app, including scheduled push, uses Cloudflare Workers:
 
 - Cloudflare Workers with `npx wrangler deploy`, using `worker.js`, `wrangler.jsonc`, and `public/`.
-- Cloudflare Pages Functions, using `functions/api/national-rail/`.
+
+The legacy Cloudflare Pages Functions remain for arrival feeds, but Pages does not
+run the Worker's scheduled push handler. If an existing Pages deployment must be
+kept, set its build output directory to `public`, never `/`; otherwise repository
+source and local files could be published as static assets.
 
 If your Cloudflare project uses a deploy command, use:
 
@@ -41,12 +45,12 @@ If your Cloudflare project uses a deploy command, use:
 npx wrangler deploy
 ```
 
-If your Cloudflare project is a Pages project, use these settings instead:
+For an existing Pages project, use these settings:
 
 ```text
 Framework preset: None / Static
 Build command: leave empty
-Build output directory: /
+Build output directory: public
 Deploy command: leave empty
 ```
 
@@ -64,7 +68,7 @@ READING_OPEN_DATA_API_TOKEN
 TFL_APP_KEY
 ```
 
-`TFL_APP_KEY` is used only by the Worker through `/api/tfl/...`, so the browser never sees your TfL API key. If your TfL account also gives an app id, add it as `TFL_APP_ID`.
+`TFL_APP_KEY` is used only by the backend through `/api/tfl/...`, so the browser never sees your TfL API key. If your TfL account also gives an app id, add it as `TFL_APP_ID`.
 
 With Wrangler, add the TfL key as a secret:
 
@@ -72,7 +76,7 @@ With Wrangler, add the TfL key as a secret:
 npx wrangler secret put TFL_APP_KEY
 ```
 
-Do not put the TfL key in `app.js`, `index.html`, `wrangler.jsonc`, or `.env` committed to GitHub.
+Do not put the TfL key in `public/app.js`, `public/index.html`, `wrangler.jsonc`, or `.env` committed to GitHub.
 
 This must be the OpenLDBWS / Darwin live departure board token, usually shaped like:
 
@@ -119,15 +123,20 @@ node scripts/generate-vapid-keys.mjs
 
 The Worker runs the scheduler every 5 minutes using the cron trigger in `wrangler.jsonc`.
 
-Then redeploy the Pages project from the latest GitHub commit.
+`wrangler.jsonc` also configures rate limits for push writes and public API reads.
+The rate-limit bindings require Wrangler 4.36 or newer. Limits are per Cloudflare
+location, so they reduce routine abuse but are not a global quota guarantee.
+For a legacy Pages deployment, configure equivalent WAF rate limiting for
+`/api/*`; the Worker bindings do not apply to Pages Functions.
 
 
 ### Reminder storage compatibility
 
 Each reminder now has an independent `schedule-index:` record. Older time-based
 `schedule:` records remain supported; editing or deleting a reminder also handles
-records omitted by the former shared endpoint index. No new Cloudflare binding is
-required. Deletion markers suppress obsolete records after KV changes propagate.
+records omitted by the former shared endpoint index. Deletion markers suppress
+obsolete records after KV changes propagate. Delivery state is stored under
+`fired:` keys so the cron cannot overwrite an edited reminder.
 KV is eventually consistent, so an update or deletion may not be visible to a
 scheduler running elsewhere immediately. The existing KV-based quota is also a
 best-effort limit, not an atomic reservation across concurrent requests.

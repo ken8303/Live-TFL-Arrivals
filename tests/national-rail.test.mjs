@@ -40,3 +40,15 @@ test("scheduled time remains available for cancelled and delayed services", () =
   assert.ok(service.scheduledArrival);
   assert.ok(Number.isFinite(service.timeToStation));
 });
+
+test("Darwin parser ignores similarly prefixed tags before operator", () => {
+  const [service] = parseDarwinServices(`
+    <service>
+      <std>12:34</std><etd>On time</etd>
+      <operatorCode>XX</operatorCode>
+      <operator>Example Rail</operator>
+      <destination><location><locationName>Oxford</locationName></location></destination>
+    </service>
+  `, 1);
+  assert.equal(service.lineName, "Example Rail");
+});

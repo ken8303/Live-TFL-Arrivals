@@ -19,6 +19,12 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (env.API_RATE_LIMITER && isProtectedPublicApi(url.pathname)) {
+      const address = request.headers.get("CF-Connecting-IP") || "unknown";
+      const { success } = await env.API_RATE_LIMITER.limit({ key: `${url.pathname.split("/")[2]}:${address}` });
+      if (!success) return withVersionHeader(Response.json({ error: "Too many requests. Please try again shortly." }, { status: 429 }));
+    }
+
     if (url.pathname === "/api/national-rail/arrivals") {
       return withVersionHeader(await getNationalRailArrivals({ request, env }));
     }
@@ -79,6 +85,13 @@ export default {
     ctx.waitUntil(runScheduledPush(controller, env));
   },
 };
+
+function isProtectedPublicApi(pathname) {
+  return pathname === "/api/tfl" || pathname.startsWith("/api/tfl/") ||
+    pathname === "/api/national-rail/arrivals" ||
+    pathname.startsWith("/api/reading-buses/") ||
+    pathname.startsWith("/api/catalog/");
+}
 
 function withVersionHeader(response, request = null) {
   const headers = new Headers(response.headers);
