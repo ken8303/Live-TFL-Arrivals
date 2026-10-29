@@ -3241,24 +3241,31 @@ async function sendTestNotification() {
 
   const title = state.schedulerDraft?.title || "Live TfL Arrivals";
   if (state.serverPushSubscription) {
-    const response = await fetch("/api/push/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subscription: state.serverPushSubscription.toJSON(),
-        clientToken: getPushDeviceToken(),
-        title,
-        url: getSameOriginPath(state.schedulerDraft?.pageUrl || window.location.href),
-      }),
-    });
-    if (response.ok) {
-      setStatus("Server test notification sent.", "ready");
-      return;
+    try {
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subscription: state.serverPushSubscription.toJSON(),
+          clientToken: getPushDeviceToken(),
+          title,
+          url: getSameOriginPath(state.schedulerDraft?.pageUrl || window.location.href),
+        }),
+      });
+      if (response.ok) {
+        setStatus("Server test notification sent.", "ready");
+      } else {
+        setStatus(`Server test notification failed (${response.status}). Please check your saved reminder and try again.`, "error");
+      }
+    } catch (error) {
+      console.warn("Server test notification failed", error);
+      setStatus("Server test notification could not be sent. Check your connection and try again.", "error");
     }
+    return;
   }
 
   await showAppNotification(title, "Test notification sent from the scheduler.", state.schedulerDraft?.pageUrl || window.location.href);
-  setStatus("Test notification sent.", "ready");
+  setStatus("Local test notification sent. Server push is not enabled on this device.", "waiting");
 }
 
 async function showAppNotification(title, body, url) {

@@ -230,6 +230,7 @@ async function processStoredSchedule(key, env, dueKey) {
   );
 
   if (result.gone) {
+    console.warn("Scheduled push subscription is no longer valid", { status: result.status || null });
     await Promise.all([env.PUSH_SCHEDULES.delete(key), env.PUSH_SCHEDULES.delete(firedKey)]);
     return { gone: true, key };
   }
@@ -238,6 +239,9 @@ async function processStoredSchedule(key, env, dueKey) {
     fired.lastFiredKey = dueKey;
     fired.lastFiredAt = new Date().toISOString();
     await env.PUSH_SCHEDULES.put(firedKey, JSON.stringify(fired));
+  } else {
+    // Avoid logging subscription endpoints, payloads, or upstream response bodies.
+    console.error("Scheduled push delivery failed", { status: result.status || null });
   }
   return { gone: false, key };
 }
@@ -491,7 +495,7 @@ async function sendWebPush(subscription, payload, env) {
 
     return {
       ok: response.status >= 200 && response.status < 300,
-      gone: [400, 404, 410].includes(response.status),
+      gone: [404, 410].includes(response.status),
       status: response.status,
       help: response.ok ? "" : await response.text(),
     };

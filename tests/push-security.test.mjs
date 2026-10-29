@@ -313,7 +313,7 @@ test("permanent push response removes an unusable schedule", async () => {
   globalThis.fetch = async (url, options) => {
     if (options?.method === "POST") {
       authHeader = options.headers.Authorization;
-      return new Response("Invalid endpoint", { status: 400 });
+      return new Response("Expired endpoint", { status: 410 });
     }
     return Response.json([{ modeName: "bus", lineName: "17", destinationName: "Town", timeToStation: 60 }]);
   };
@@ -359,4 +359,22 @@ test("editing an old reminder preserves its delivery state until migration", asy
   assert.equal(saved.schedule.title, "Edited");
   assert.equal(saved.lastFiredKey, legacy.lastFiredKey);
   assert.deepEqual(saved.alertState, legacy.alertState);
+});
+
+test("a 400 push response retains the reminder and logs the failure", async () => {
+  const kv = new MemoryKv();
+  const env = await makeVapidEnv(kv);
+  const now = new Date();
+  const time = `${String(now.getUTCHours()).padStart(2, "0")}:${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`;
+  await savePushSchedule({ env, request: makeRequest({ subscription, clientToken, timeZone: "UTC", schedule: { ...schedule, time, weekdays: [0,1,2,3,4,5,6] } }) });
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const logs = [];
+  globalThis.fetch = async (_url, options) => options?.method === "POST" ? new Response("bad request", { status: 400 }) : Response.json([]);
+  console.error = (...args) => logs.push(args);
+  try { await runScheduledPush({}, env); } finally { globalThis.fetch = originalFetch; console.error = originalError; }
+  assert.ok([...kv.store.keys()].some((key) => key.startsWith("schedule:")));
+  assert.equal(logs[0][0], "Scheduled push delivery failed");
+  assert.equal(logs[0][1].status, 400);
+  assert.equal(JSON.stringify(logs).includes(subscription.endpoint), false);
 });

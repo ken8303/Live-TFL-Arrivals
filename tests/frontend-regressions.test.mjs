@@ -185,3 +185,23 @@ test("an unsaved local reminder is not registered for server push", async () => 
   assert.equal(synced, false);
   assert.equal(statuses.at(-1).tone, "error");
 });
+
+test("server test failures are reported instead of triggering a local success", async () => {
+  for (const mode of ["http", "network", "success", "local"]) {
+    let localCount = 0;
+    const messages = [];
+    const ctx = vm.createContext({
+      state: { schedulerDraft: { title: "Bus" }, serverPushSubscription: mode === "local" ? null : { toJSON: () => ({}) } },
+      window: { Notification: {}, location: { href: "https://example.test" } },
+      Notification: { permission: "granted" }, console: { warn: noop },
+      getPushDeviceToken: () => "token", getSameOriginPath: () => "/",
+      fetch: async () => { if (mode === "network") throw new Error("offline"); return { ok: mode === "success", status: 502 }; },
+      showAppNotification: async () => { localCount++; },
+      setStatus: (message, tone) => messages.push({ message, tone }),
+    });
+    vm.runInContext(functions("sendTestNotification"), ctx);
+    await ctx.sendTestNotification();
+    assert.equal(localCount, mode === "local" ? 1 : 0);
+    assert.equal(messages.at(-1).tone, mode === "success" ? "ready" : mode === "local" ? "waiting" : "error");
+  }
+});
