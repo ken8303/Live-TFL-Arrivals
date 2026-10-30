@@ -57,7 +57,7 @@ test("failed server sync keeps its warning while successful saves confirm succes
       getPushDeviceToken: () => "test", fetch: async () => ({ ok, status: ok ? 200 : 503, json: async () => ({ error: "offline" }) }),
       setStatus: (message, tone) => statuses.push({ message, tone }),
     });
-    vm.runInContext(functions("saveCurrentSchedule", "syncScheduleToServer"), ctx);
+    vm.runInContext(functions("saveCurrentSchedule", "syncScheduleToServer", "getServerSyncSignature"), ctx);
     await ctx.saveCurrentSchedule();
     assert.equal(ctx.state.savedSchedules.length, 1);
     assert.equal(statuses.at(-1).tone, ok ? "ready" : "waiting");
@@ -237,4 +237,29 @@ test("startup restores a missing subscription when permission is granted", async
   vm.runInContext(functions("initServerPush"), ctx);
   await ctx.initServerPush();
   assert.equal(renewed, 1);
+});
+
+test("background sync reports partial failures", async () => {
+  const messages = [];
+  const ctx = vm.createContext({ state: { serverPushSubscription: {}, savedSchedules: [{ id: "a" }, { id: "b" }] },
+    syncScheduleToServer: async (s) => s.id === "a", setStatus: (message, tone) => messages.push({ message, tone }) });
+  vm.runInContext(functions("syncAllSchedulesToServer"), ctx);
+  assert.equal(await ctx.syncAllSchedulesToServer(), false);
+  assert.equal(ctx.state.serverPushSyncFailed, true);
+  assert.equal(messages.at(-1).tone, "error");
+});
+
+test("local delivery runs only when the matching server sync has not succeeded", async () => {
+  const schedule = { id: "morning", updatedAt: "first" };
+  let count = 0;
+  const ctx = vm.createContext({ state: { savedSchedules: [schedule], serverPushSubscription: { endpoint: "test" }, serverSyncedSchedules: {} },
+    SCHEDULE_CATCHUP_MS: 600_000, getPreviousScheduleTime: () => new Date(Date.now() - 1000),
+    sendScheduleNotification: async () => { count++; return true; }, persistSavedSchedules: noop, renderSavedSchedules: noop });
+  vm.runInContext(functions("runDueSchedules", "getServerSyncSignature"), ctx);
+  ctx.state.serverSyncedSchedules.morning = ctx.getServerSyncSignature(schedule);
+  await ctx.runDueSchedules();
+  assert.equal(count, 0);
+  schedule.updatedAt = "edited";
+  await ctx.runDueSchedules();
+  assert.equal(count, 1);
 });

@@ -74,6 +74,12 @@ export async function savePushSchedule({ request, env }) {
     return json({ error: `Only ${MAX_SCHEDULES_PER_SUBSCRIPTION} server schedules can be saved on one device.` }, 429);
   }
 
+  if (existingKey === key && index?.key === key && existing?.clientTokenHash === clientTokenHash &&
+      existing.timeZone === timeZone && JSON.stringify(existing.subscription) === JSON.stringify(subscription) &&
+      JSON.stringify(existing.schedule) === JSON.stringify(schedule)) {
+    return json({ ok: true, scheduleId: schedule.id, unchanged: true });
+  }
+
   await env.PUSH_SCHEDULES.put(
     key,
     JSON.stringify({
@@ -242,7 +248,7 @@ async function processStoredSchedule(key, env, dueKey) {
     await env.PUSH_SCHEDULES.put(firedKey, JSON.stringify(fired));
   } else {
     // Avoid logging subscription endpoints, payloads, or upstream response bodies.
-    console.error("Scheduled push delivery failed", { status: result.status || null });
+    console.error("Scheduled push delivery failed", { status: result.status || null, category: result.category || "push_service" });
   }
   return { gone: false, key };
 }
@@ -470,19 +476,22 @@ async function getTflArrivals(stopId, type, env) {
 }
 
 async function sendWebPush(subscription, payload, env) {
+  let stage = "configuration";
   try {
     const vapidPrivateKey = getVapidPrivateKey(env);
     if (!env.VAPID_PUBLIC_KEY || !vapidPrivateKey) {
-      return { ok: false, help: "VAPID keys are not configured." };
+      return { ok: false, category: stage, help: "VAPID keys are not configured." };
     }
 
     let encrypted;
     try {
       encrypted = await encryptPushPayload(subscription, JSON.stringify(payload));
     } catch (error) {
-      return { ok: false, gone: error.name === "DataError", help: error.message };
+      return { ok: false, gone: error.name === "DataError", category: "encryption", help: error.message };
     }
+    stage = "vapid_signing";
     const jwt = await createVapidJwt(subscription.endpoint, env);
+    stage = "network";
     const response = await fetch(subscription.endpoint, {
       method: "POST",
       headers: {
@@ -502,7 +511,7 @@ async function sendWebPush(subscription, payload, env) {
       help: response.ok ? "" : await response.text(),
     };
   } catch (error) {
-    return { ok: false, help: error.message };
+    return { ok: false, category: stage, help: error.message };
   }
 }
 

@@ -391,3 +391,39 @@ test("push requests use high urgency and a ten minute lifetime", async () => {
   assert.equal(headers.TTL, "600");
   assert.equal(headers.Urgency, "high");
 });
+
+test("unchanged schedule sync performs no KV writes, but restores a missing record", async () => {
+  const kv = new MemoryKv();
+  let writes = 0;
+  const put = kv.put.bind(kv);
+  kv.put = async (...args) => { writes++; return put(...args); };
+  const env = { PUSH_SCHEDULES: kv, PUSH_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+  const save = () => savePushSchedule({ env, request: makeRequest({ subscription, schedule, clientToken, timeZone: "UTC" }) });
+  assert.equal((await save()).status, 200);
+  writes = 0;
+  const response = await save();
+  assert.equal((await response.json()).unchanged, true);
+  assert.equal(writes, 0);
+  const key = [...kv.store.keys()].find((item) => item.startsWith("schedule:"));
+  await kv.delete(key);
+  assert.equal((await save()).status, 200);
+  assert.ok(kv.store.has(key));
+  assert.ok(writes > 0);
+});
+
+test("local signing errors log a safe category without credentials or endpoints", async () => {
+  const kv = new MemoryKv();
+  const env = { PUSH_SCHEDULES: kv, VAPID_PUBLIC_KEY: "test", VAPID_PRIVATE_JWK: "invalid-secret", VAPID_SUBJECT: "mailto:owner@example.com" };
+  const now = new Date();
+  const time = `${String(now.getUTCHours()).padStart(2, "0")}:${String(Math.floor(now.getUTCMinutes() / 5) * 5).padStart(2, "0")}`;
+  await savePushSchedule({ env, request: makeRequest({ subscription, clientToken, timeZone: "UTC", schedule: { ...schedule, time, weekdays: [0,1,2,3,4,5,6] } }) });
+  const originalFetch = globalThis.fetch, originalError = console.error;
+  const logs = [];
+  globalThis.fetch = async () => Response.json([]);
+  console.error = (...args) => logs.push(args);
+  try { await runScheduledPush({}, env); } finally { globalThis.fetch = originalFetch; console.error = originalError; }
+  assert.equal(logs[0][1].category, "vapid_signing");
+  assert.equal(logs[0][1].status, null);
+  assert.equal(JSON.stringify(logs).includes("invalid-secret"), false);
+  assert.equal(JSON.stringify(logs).includes(subscription.endpoint), false);
+});

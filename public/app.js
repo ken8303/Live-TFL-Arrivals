@@ -3147,17 +3147,28 @@ async function subscribeToServerPush() {
     });
   }
 
-  await syncAllSchedulesToServer();
+  const synced = await syncAllSchedulesToServer();
+  state.serverPushSyncFailed = synced === false;
   return state.serverPushSubscription;
 }
 
 async function syncAllSchedulesToServer() {
-  if (!state.serverPushSubscription) return;
-  await Promise.all(state.savedSchedules.map((schedule) => syncScheduleToServer(schedule)));
+  if (!state.serverPushSubscription) return false;
+  const results = await Promise.all(state.savedSchedules.map((schedule) => syncScheduleToServer(schedule)));
+  const success = results.every((result) => result === true);
+  state.serverPushSyncFailed = !success;
+  if (!success) setStatus("Some reminders could not be synced for background notifications. Open the app and try again.", "error");
+  return success;
+}
+
+function getServerSyncSignature(schedule) {
+  const { lastFiredAt, alertState, ...selection } = schedule;
+  return JSON.stringify({ selection, endpoint: state.serverPushSubscription?.endpoint, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
 }
 
 async function syncScheduleToServer(schedule) {
-  if (!state.serverPushConfigured || !state.serverPushSubscription) return;
+  if (!state.serverPushConfigured || !state.serverPushSubscription) return false;
+  const signature = getServerSyncSignature(schedule);
 
   try {
     const response = await fetch("/api/push/schedules", {
@@ -3177,8 +3188,11 @@ async function syncScheduleToServer(schedule) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || `Server push sync failed with status ${response.status}.`);
     }
+    state.serverSyncedSchedules ||= {};
+    state.serverSyncedSchedules[schedule.id] = signature;
     return true;
   } catch (error) {
+    if (state.serverSyncedSchedules) delete state.serverSyncedSchedules[schedule.id];
     console.warn("Could not sync schedule to server push", error);
     setStatus("Schedule saved on this device. Server push could not be synced yet.", "waiting");
     return false;
@@ -3231,9 +3245,16 @@ async function requestNotificationPermission() {
 
   const permission = await Notification.requestPermission();
   if (permission === "granted") {
-    await subscribeToServerPush();
+    try {
+      await subscribeToServerPush();
+    } catch (error) {
+      console.warn("Could not enable server push", error);
+      setStatus("Server push could not be enabled. Please try again.", "error");
+      refreshSchedulerUi();
+      return;
+    }
     refreshSchedulerUi();
-    setStatus(state.serverPushSubscription ? "Server push notifications enabled for this device." : "Notifications enabled for this web app.", "ready");
+    if (!state.serverPushSyncFailed) setStatus(state.serverPushSubscription ? "Server push notifications enabled for this device." : "Notifications enabled for this web app.", "ready");
     return;
   }
 
@@ -3359,6 +3380,7 @@ async function runDueSchedules() {
 
     for (const { schedule, dueAt } of dueSchedules) {
       if (!state.savedSchedules.includes(schedule)) continue;
+      if (state.serverPushSubscription && state.serverSyncedSchedules?.[schedule.id] === getServerSyncSignature(schedule)) continue;
       if (!(await sendScheduleNotification(schedule))) continue;
       schedule.lastFiredAt = dueAt.getTime();
       changed = true;
