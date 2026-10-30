@@ -13,7 +13,7 @@ import {
   sendPushTest,
 } from "./functions/api/push.js";
 
-const APP_VERSION = "2026-10-29-push-diagnostics";
+const APP_VERSION = "2026-10-30-push-delivery";
 
 export default {
   async fetch(request, env) {

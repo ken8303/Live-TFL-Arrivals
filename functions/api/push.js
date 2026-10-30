@@ -12,7 +12,7 @@ const SCHEDULE_PREFIX = "schedule:";
 const SCHEDULE_INDEX_PREFIX = "schedule-index:";
 const FIRED_PREFIX = "fired:";
 const RATE_LIMIT_PREFIX = "rate-limit:";
-const DEFAULT_TTL_SECONDS = 60 * 60;
+const DEFAULT_TTL_SECONDS = 600;
 const MAX_PUSH_LINES = 3;
 const MAX_SCHEDULES_PER_SUBSCRIPTION = 20;
 const MAX_SCHEDULE_PAGE_COUNT = 1000;
@@ -225,6 +225,7 @@ async function processStoredSchedule(key, env, dueKey) {
       title: stored.schedule.title || "Live TfL Arrivals",
       body: notification.body,
       url: normaliseSameOriginPath(stored.schedule.pageUrl),
+      tag: `schedule-${stored.schedule.id}`,
     },
     env,
   );
@@ -489,6 +490,7 @@ async function sendWebPush(subscription, payload, env) {
         "Content-Encoding": "aes128gcm",
         "Content-Type": "application/octet-stream",
         TTL: String(DEFAULT_TTL_SECONDS),
+        Urgency: "high",
       },
       body: encrypted,
     });

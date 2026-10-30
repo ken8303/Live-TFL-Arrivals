@@ -1,9 +1,9 @@
-const STATIC_CACHE = "live-tfl-arrivals-static-v32";
+const STATIC_CACHE = "live-tfl-arrivals-static-v33";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/styles.css?v=2026-10-29-push-diagnostics",
-  "/app.js?v=2026-10-29-push-diagnostics",
+  "/styles.css?v=2026-10-30-push-delivery",
+  "/app.js?v=2026-10-30-push-delivery",
   "/manifest.webmanifest?v=2026-06-08-pwa",
   "/icon.svg?v=2026-06-08-pwa",
   "/icon-maskable.svg?v=2026-06-08-pwa",
@@ -84,7 +84,8 @@ self.addEventListener("push", (event) => {
       body: payload.body || "Your scheduled transport reminder is ready.",
       icon: "/icon.svg?v=2026-06-08-pwa",
       badge: "/icon-maskable.svg?v=2026-06-08-pwa",
-      tag: "live-tfl-arrivals-server-schedule",
+      tag: String(payload.tag || "live-tfl-arrivals-server-schedule").slice(0, 100),
+      renotify: true,
       data: {
         url: normaliseNotificationUrl(payload.url || "/?page=scheduler"),
       },

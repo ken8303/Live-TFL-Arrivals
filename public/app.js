@@ -3111,7 +3111,9 @@ async function initServerPush() {
 
     const registration = await waitForServiceWorkerReady();
     state.serverPushSubscription = await registration.pushManager.getSubscription();
-    if (state.serverPushSubscription && state.savedSchedules.length) {
+    if (state.savedSchedules.length && "Notification" in window && Notification.permission === "granted") {
+      await subscribeToServerPush();
+    } else if (state.serverPushSubscription && state.savedSchedules.length) {
       await syncAllSchedulesToServer();
     }
     refreshSchedulerUi();
@@ -3127,10 +3129,21 @@ async function subscribeToServerPush() {
 
   const registration = await waitForServiceWorkerReady();
   state.serverPushSubscription = await registration.pushManager.getSubscription();
+  const applicationServerKey = urlBase64ToUint8Array(state.serverPushPublicKey);
+  const existingKey = state.serverPushSubscription?.options?.applicationServerKey;
+  if (existingKey) {
+    const bytes = new Uint8Array(existingKey);
+    const differs = bytes.length !== applicationServerKey.length || bytes.some((byte, index) => byte !== applicationServerKey[index]);
+    if (differs) {
+      const unsubscribed = await state.serverPushSubscription.unsubscribe();
+      if (!unsubscribed) throw new Error("Could not replace the old push subscription.");
+      state.serverPushSubscription = null;
+    }
+  }
   if (!state.serverPushSubscription) {
     state.serverPushSubscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(state.serverPushPublicKey),
+      applicationServerKey,
     });
   }
 
@@ -3268,7 +3281,7 @@ async function sendTestNotification() {
   setStatus("Local test notification sent. Server push is not enabled on this device.", "waiting");
 }
 
-async function showAppNotification(title, body, url) {
+async function showAppNotification(title, body, url, tag = "live-tfl-arrivals-schedule") {
   if ("serviceWorker" in navigator) {
     try {
       const registration = await waitForServiceWorkerReady();
@@ -3277,7 +3290,8 @@ async function showAppNotification(title, body, url) {
           body,
           icon: "./icon.svg",
           badge: "./icon-maskable.svg",
-          tag: "live-tfl-arrivals-schedule",
+          tag,
+          renotify: true,
           data: { url },
         });
         return;
@@ -3287,7 +3301,7 @@ async function showAppNotification(title, body, url) {
     }
   }
 
-  new Notification(title, { body });
+  new Notification(title, { body, tag, renotify: true });
 }
 
 function waitForServiceWorkerReady(timeoutMs = 2500) {
@@ -3397,7 +3411,7 @@ async function sendScheduleNotification(schedule) {
         schedule.alertState = alertResult.alertState;
         return true;
       }
-      await showAppNotification(schedule.title, alertResult.lines.join(" | "), schedule.pageUrl || window.location.href);
+      await showAppNotification(schedule.title, alertResult.lines.join(" | "), schedule.pageUrl || window.location.href, `schedule-${schedule.id}`);
       schedule.alertState = alertResult.alertState;
       return true;
     }
@@ -3405,7 +3419,7 @@ async function sendScheduleNotification(schedule) {
     const body = lines.length
       ? lines.join(" | ")
       : `No live ${schedule.type === "bus" ? "bus" : "train"} times are available right now.`;
-    await showAppNotification(schedule.title, body, schedule.pageUrl || window.location.href);
+    await showAppNotification(schedule.title, body, schedule.pageUrl || window.location.href, `schedule-${schedule.id}`);
     return true;
   } catch (error) {
     console.error("Could not send schedule notification", error);

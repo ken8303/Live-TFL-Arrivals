@@ -378,3 +378,16 @@ test("a 400 push response retains the reminder and logs the failure", async () =
   assert.equal(logs[0][1].status, 400);
   assert.equal(JSON.stringify(logs).includes(subscription.endpoint), false);
 });
+
+test("push requests use high urgency and a ten minute lifetime", async () => {
+  const kv = new MemoryKv();
+  const env = await makeVapidEnv(kv);
+  await savePushSchedule({ env, request: makeRequest({ subscription, schedule, clientToken }) });
+  const originalFetch = globalThis.fetch;
+  let headers;
+  globalThis.fetch = async (_url, options) => { headers = options.headers; return new Response(null, { status: 201 }); };
+  try { await sendPushTest({ env, request: makeRequest({ subscription, clientToken }) }); }
+  finally { globalThis.fetch = originalFetch; }
+  assert.equal(headers.TTL, "600");
+  assert.equal(headers.Urgency, "high");
+});

@@ -205,3 +205,36 @@ test("server test failures are reported instead of triggering a local success", 
     assert.equal(messages.at(-1).tone, mode === "success" ? "ready" : mode === "local" ? "waiting" : "error");
   }
 });
+
+test("push subscriptions are renewed for changed keys and restored when missing", async () => {
+  for (const mode of ["changed", "same", "missing", "unknown"]) {
+    let unsubscribeCount = 0, subscribeCount = 0, syncCount = 0;
+    const key = new Uint8Array([1, 2, 3]);
+    const old = { options: mode === "unknown" ? {} : { applicationServerKey: new Uint8Array(mode === "changed" ? [4, 5, 6] : [1, 2, 3]).buffer },
+      unsubscribe: async () => { unsubscribeCount++; return true; } };
+    const fresh = { options: { applicationServerKey: key.buffer } };
+    const registration = { pushManager: { getSubscription: async () => mode === "missing" ? null : old,
+      subscribe: async () => { subscribeCount++; return fresh; } } };
+    const ctx = vm.createContext({ state: { serverPushConfigured: true, serverPushPublicKey: "key" },
+      waitForServiceWorkerReady: async () => registration, urlBase64ToUint8Array: () => key,
+      syncAllSchedulesToServer: async () => { syncCount++; }, Uint8Array });
+    vm.runInContext(functions("subscribeToServerPush"), ctx);
+    await ctx.subscribeToServerPush();
+    assert.equal(unsubscribeCount, mode === "changed" ? 1 : 0);
+    assert.equal(subscribeCount, ["changed", "missing"].includes(mode) ? 1 : 0);
+    assert.equal(syncCount, 1);
+  }
+});
+
+test("startup restores a missing subscription when permission is granted", async () => {
+  let renewed = 0;
+  const ctx = vm.createContext({ state: { savedSchedules: [{ id: "bus" }] },
+    navigator: { serviceWorker: {} }, window: { PushManager: {}, Notification: {} }, Notification: { permission: "granted" },
+    fetchJson: async () => ({ configured: true, publicKey: "key" }),
+    waitForServiceWorkerReady: async () => ({ pushManager: { getSubscription: async () => null } }),
+    subscribeToServerPush: async () => { renewed++; }, syncAllSchedulesToServer: noop,
+    refreshSchedulerUi: noop, console });
+  vm.runInContext(functions("initServerPush"), ctx);
+  await ctx.initServerPush();
+  assert.equal(renewed, 1);
+});
